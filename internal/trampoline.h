@@ -17,7 +17,7 @@
  *
  * orig func (post-hook):
  *   [0] ldr    x16, #8         ─┐
- *   [1] br     x16              ├-> jump to detour
+ *   [1] br     x16              ├─> jump to detour
  *   [2] <detour_lo>             │
  *   [3] <detour_hi>            ─┘
  *   [4] ...  rest of func ...
