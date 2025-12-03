@@ -21,12 +21,17 @@
  *   br  x16              <- branch to detour
  *   <addr_lo>            ┐
  *   <addr_hi>            ┴─ 64-bit absolute address
+ *
+ * sizing 4 trampoline:
+ *      worst case per instr:   cbz ─> inverted + abs jump  = 5 instrs (20 bytes)
+ *      4 hook instrs x 20 = 80 bytes + jump back (16) = 96 bytes
+ *      we can round up to 128 from 64 just in case
  * ───────────────────────────────────────────────────────────────────────────── */
 
 #define INSTR_SIZE          4u
 #define HOOK_INSTR_COUNT    4u
 #define HOOK_SIZE           (INSTR_SIZE * HOOK_INSTR_COUNT)
-#define TRAMPOLINE_MAX      64u
+#define TRAMPOLINE_MAX      128u
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
