@@ -17,7 +17,7 @@
 #include <pthread.h>
 
 
-/* linked list registry for hooks  */
+/*  linked list registry for hooks  */
 static struct hook *g_hooks = NULL;
 
 static void _registry_add(struct hook *h)
@@ -49,6 +49,55 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 #define UNLOCK()  pthread_mutex_unlock(&g_lock)
 
 
+size_t hook_count(void)
+{
+    size_t count = 0;
+    LOCK();
+    for (struct hook *h = g_hooks;  h; h = h->next)
+        count++;
+    UNLOCK();
+    return count;
+}
+
+
+int unhook_all(void)
+{
+    int last_err = OK;
+
+    LOCK();
+    while (g_hooks)
+    {
+        struct hook *h = g_hooks;
+
+        if (h->active)
+        {
+            int status = mem_make_writable((void *) h->targ, HOOK_SIZE);
+            if (status == OK)
+            {
+                memcpy((void *) h->targ, h->orig_instrs, HOOK_SIZE);
+                flush_icache((void *) h->targ, HOOK_SIZE);
+                h->active = false;
+            }
+            else {
+                last_err = status;
+            }
+        }
+
+        g_hooks = h->next;
+        h->next = NULL;
+
+        if (h->trampoline)
+        {
+            trampoline_destroy(h->trampoline);
+            h->trampoline = 0;
+        }
+    }
+    UNLOCK();
+
+    return last_err;
+}
+
+
 int init(void)
 {
     return OK;
@@ -56,6 +105,8 @@ int init(void)
 
 void shutdown(void)
 {
+    /*  literally just remove all hooks!  */
+    unhook_all();
 }
 
 int hook_create(void *targ, void *detour, struct hook *h, void **orig)

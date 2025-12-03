@@ -69,6 +69,23 @@ int hook_batch(struct hook_desc *descs, size_t count, struct hook *hooks);
 int unhook_batch(struct hook *hooks, size_t count);
 
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * query API
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+size_t hook_count(void);
+int unhook_all(void);
+
+static inline bool hook_is_active(const struct hook *h)
+{
+    return h && h->active;
+}
+static inline void *hook_get_trampoline(const struct hook *h)
+{
+    return h ? (void *) h->trampoline : NULL;
+}
+
+
 #ifdef __cplusplus
 }
 #endif
