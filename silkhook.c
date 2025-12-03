@@ -17,6 +17,32 @@
 #include <pthread.h>
 
 
+/* linked list registry for hooks  */
+static struct hook *g_hooks = NULL;
+
+static void _registry_add(struct hook *h)
+{
+    h->next = g_hooks;
+    g_hooks = h;
+}
+
+static void _registry_remove(struct hook *h)
+{
+    struct hook **pp = &g_hooks;
+    while (*pp)
+    {
+        if (*pp == h)
+        {
+            *pp = h->next;
+            h->next = NULL;
+            return;
+        }
+        pp = &(*pp)->next;
+    }
+}
+
+
+/*  mutex locks  */
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
 #define LOCK()    pthread_mutex_lock(&g_lock)
@@ -95,6 +121,7 @@ int hook_install(struct hook *h)
     flush_icache((void *) h->targ, HOOK_SIZE);
 
     h->active = true;
+    _registry_add(h);
 
     UNLOCK();
     return OK;
@@ -147,6 +174,7 @@ int hook_destroy(struct hook *h)
             flush_icache((void *) h->targ, HOOK_SIZE);
             h->active =  false;
         }
+        _registry_remove(h);
     }
 
     if (h->trampoline)
