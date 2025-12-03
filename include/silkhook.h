@@ -50,6 +50,8 @@ int hook_destroy(struct hook *h);
 int hook(void *targ, void *detour, struct hook *h, void **orig);
 int unhook(struct hook *h);
 
+struct hook *hook_find(void *targ);
+
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * batch API

@@ -49,6 +49,27 @@ static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 #define UNLOCK()  pthread_mutex_unlock(&g_lock)
 
 
+static struct hook *_registry_find(uintptr_t targ)
+{
+    for (struct hook *h = g_hooks; h; h = h->next)
+    {
+        if (h->targ == targ)
+            return h;
+    }
+    return NULL;
+}
+
+
+struct hook *hook_find(void *targ)
+{
+    struct hook *h;
+    LOCK();
+    h = _registry_find((uintptr_t) targ);
+    UNLOCK();
+    return h;
+}
+
+
 size_t hook_count(void)
 {
     size_t count = 0;
@@ -147,20 +168,23 @@ int hook_install(struct hook *h)
     uint32_t hook_code[HOOK_INSTR_COUNT];
     struct codebuf cb;
 
-    if (!h)
+    if (! h)
         return ERR_INVALID_ARG;
 
     LOCK();
 
-    if (h->active)
-    {
+    if (h->active) {
         UNLOCK();
         return ERR_EXISTS;
     }
 
-    status = mem_make_writable((void *) h->targ, HOOK_SIZE);
-    if (status != OK)
-    {
+    if (_registry_find(h->targ)) {
+        UNLOCK();
+        return ERR_EXISTS;
+    }
+
+    status = mem_make_writable((void *)h->targ, HOOK_SIZE);
+    if (status != OK) {
         UNLOCK();
         return status;
     }
@@ -168,8 +192,8 @@ int hook_install(struct hook *h)
     codebuf_init(&cb, hook_code, HOOK_INSTR_COUNT, h->targ);
     emit_absolute_jump(&cb, h->detour);
 
-    memcpy((void *) h->targ, hook_code, HOOK_SIZE);
-    flush_icache((void *) h->targ, HOOK_SIZE);
+    memcpy((void *)h->targ, hook_code, HOOK_SIZE);
+    flush_icache((void *)h->targ, HOOK_SIZE);
 
     h->active = true;
     _registry_add(h);
