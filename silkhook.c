@@ -14,6 +14,13 @@
 #include "platform/memory.h"
 
 #include <string.h>
+#include <pthread.h>
+
+
+static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
+
+#define LOCK()    pthread_mutex_lock(&g_lock)
+#define UNLOCK()  pthread_mutex_unlock(&g_lock)
 
 
 int init(void)
@@ -29,14 +36,14 @@ int hook_create(void *targ, void *detour, struct hook *h, void **orig)
 {
     int status;
 
-    if (! targ || !detour || !h)
-    {
+    if (!targ || !detour || !h)
         return ERR_INVALID_ARG;
-    }
 
-    memset(h, 0, sizeof(struct hook));
+    LOCK();
 
-    h->targ    = (uintptr_t)targ;
+    memset(h, 0, sizeof(*h));
+
+    h->targ      = (uintptr_t)targ;
     h->detour    = (uintptr_t)detour;
     h->orig_size = HOOK_SIZE;
     h->active    = false;
@@ -46,45 +53,50 @@ int hook_create(void *targ, void *detour, struct hook *h, void **orig)
     status = trampoline_create(h->targ, h->orig_size, &h->trampoline);
     if (status != OK)
     {
+        UNLOCK();
         return status;
     }
 
     if (orig)
-    {
-        *orig = (void *)h->trampoline;
-    }
+        *orig = (void *) h->trampoline;
 
+    UNLOCK();
     return OK;
 }
 
 int hook_install(struct hook *h)
 {
     int status;
+    uint32_t hook_code[HOOK_INSTR_COUNT];
+    struct codebuf cb;
 
     if (!h)
-    {
         return ERR_INVALID_ARG;
-    }
+
+    LOCK();
+
     if (h->active)
     {
+        UNLOCK();
         return ERR_EXISTS;
     }
 
-    status = mem_make_writable((void *)h->targ, HOOK_SIZE);
+    status = mem_make_writable((void *) h->targ, HOOK_SIZE);
     if (status != OK)
     {
+        UNLOCK();
         return status;
     }
 
-    uint32_t hook_code[HOOK_INSTR_COUNT];
-    struct codebuf cb;
     codebuf_init(&cb, hook_code, HOOK_INSTR_COUNT, h->targ);
     emit_absolute_jump(&cb, h->detour);
 
-    memcpy((void *)h->targ, hook_code, HOOK_SIZE);
-    flush_icache((void *)h->targ, HOOK_SIZE);
+    memcpy((void *) h->targ, hook_code, HOOK_SIZE);
+    flush_icache((void *) h->targ, HOOK_SIZE);
 
     h->active = true;
+
+    UNLOCK();
     return OK;
 }
 
@@ -93,43 +105,57 @@ int hook_remove(struct hook *h)
     int status;
 
     if (!h)
-    {
         return ERR_INVALID_ARG;
-    }
+
+    LOCK();
+
     if (!h->active)
     {
+        UNLOCK();
         return ERR_NOT_HOOKED;
     }
 
-    status = mem_make_writable((void *)h->targ, HOOK_SIZE);
+    status = mem_make_writable((void *) h->targ, HOOK_SIZE);
     if (status != OK)
     {
+        UNLOCK();
         return status;
     }
 
-    memcpy((void *)h->targ, h->orig_instrs, HOOK_SIZE);
-    flush_icache((void *)h->targ, HOOK_SIZE);
+    memcpy((void *) h->targ, h->orig_instrs, HOOK_SIZE);
+    flush_icache((void *) h->targ, HOOK_SIZE);
 
     h->active = false;
+
+    UNLOCK();
     return OK;
 }
 
 int hook_destroy(struct hook *h)
 {
     if (!h)
-    {
         return ERR_INVALID_ARG;
-    }
+
+    LOCK();
+
     if (h->active)
     {
-        hook_remove(h);
+        int status = mem_make_writable((void *) h->targ, HOOK_SIZE);
+        if (status == OK)
+        {
+            memcpy((void *) h->targ, h->orig_instrs, HOOK_SIZE);
+            flush_icache((void *) h->targ, HOOK_SIZE);
+            h->active =  false;
+        }
     }
+
     if (h->trampoline)
     {
         trampoline_destroy(h->trampoline);
         h->trampoline = 0;
     }
 
+    UNLOCK();
     return OK;
 }
 
@@ -139,9 +165,7 @@ int hook(void *targ, void *detour, struct hook *h, void **orig)
 
     status = hook_create(targ, detour, h, orig);
     if (status != OK)
-    {
         return status;
-    }
 
     status = hook_install(h);
     if (status != OK)
@@ -159,9 +183,7 @@ int unhook(struct hook *h)
 
     status = hook_remove(h);
     if (status != OK && status != ERR_NOT_HOOKED)
-    {
         return status;
-    }
 
     return hook_destroy(h);
 }
