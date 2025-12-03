@@ -166,3 +166,42 @@ int unhook(struct hook *h)
     return hook_destroy(h);
 }
 
+int hook_batch(struct hook_desc *descs, size_t count, struct hook *hooks)
+{
+    int status;
+    size_t i;
+
+    if (!descs || !hooks || count == 0)
+        return ERR_INVALID_ARG;
+
+    for (i = 0; i < count; i++)
+    {
+        status = hook(descs[i].targ, descs[i].detour, &hooks[i], descs[i].orig);
+        if (status != OK)
+            goto rollback;
+    }
+
+    return OK;
+
+rollback:
+    while (i-- >0)
+        unhook(&hooks[i]);
+    return status;
+}
+
+int unhook_batch(struct hook *hooks, size_t count)
+{
+    int status, last_err = OK;
+
+    if (!hooks || count == 0)
+        return ERR_INVALID_ARG;
+
+    for (size_t i = 0; i < count; i++)
+    {
+        status = unhook(&hooks[i]);
+        if (status != OK)
+            last_err = status;
+    }
+
+    return last_err;
+}

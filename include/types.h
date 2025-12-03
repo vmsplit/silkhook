@@ -32,7 +32,7 @@
 /* ─────────────────────────────────────────────────────────────────────────────
  * hook context
  *
- *       targ ------> detour ──────> trampoline ──────> targ+16
+ *       targ ──────> detour ──────> trampoline ──────> targ+16
  *        │                              │
  *        └──────────────────────────────┘
  *                  (call orig)
@@ -47,6 +47,24 @@ struct hook {
     size_t      orig_size;
 
     bool        active;
+    struct hook *next;
+};
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * hook descriptor
+ *
+ *      struct hook_desc descs[] = {
+ *          { func_a, detour_a, NULL },
+ *          { func_b, dotour_b, NULL },
+ *      };
+ *      hook_batch(descs, 2, hooks);
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+struct hook_desc {
+    void *targ;
+    void *detour;
+    void **orig;
 };
 
 

@@ -51,6 +51,24 @@ int hook(void *targ, void *detour, struct hook *h, void **orig);
 int unhook(struct hook *h);
 
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * batch API
+ *
+ *   struct hook_desc descs[] = {
+ *       { (void *) open,  _hooked_open,  &orig_open  },
+ *       { (void *) read,  _hooked_read,  &orig_read  },
+ *       { (void *) write, _hooked_write, &orig_write },
+ *   };
+ *   struct hook hooks[3];
+ *   hook_batch(descs, 3, hooks);
+ *   ...
+ *   unhook_batch(hooks, 3);
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+int hook_batch(struct hook_desc *descs, size_t count, struct hook *hooks);
+int unhook_batch(struct hook *hooks, size_t count);
+
+
 #ifdef __cplusplus
 }
 #endif
