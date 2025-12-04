@@ -1,8 +1,9 @@
 obj-m := silkhook_test.o
 
-silkhook_test-y := silkhook_kmod.o \
-                   internal/trampoline.o \
-                   internal/relocator.o \
+silkhook_test-y := silkhook_kmod.o          \
+                   silkhook.o               \
+                   internal/trampoline.o    \
+                   internal/relocator.o     \
                    platform/kernel/memory.o \
                    platform/kernel/ksyms.o
 
