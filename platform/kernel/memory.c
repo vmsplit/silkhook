@@ -82,7 +82,8 @@ int __mem_alloc_exec(size_t size, void **out)
 
     flush_icache_range((unsigned long)mem, (unsigned long) mem + size);
     ret = __set_memory_x_fn((unsigned long)mem, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
-    if (ret) {
+    if (ret)
+    {
         vfree(mem);
         return SILKHOOK_ERR_PROT;
     }

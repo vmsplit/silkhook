@@ -66,7 +66,8 @@ static void __reloc_ldr_lit(uint32_t instr, uintptr_t targ, struct __codebuf *cb
 
     __EMIT_MOV64_OPT(cb, 16, targ);
 
-    if (v) {
+    if (v)
+    {
         uint32_t sz = (opc == 0) ? 2   : (opc == 1) ? 3 : 4;
         __CODEBUF_EMIT(cb, 0x3C400200u | (sz << 30) | (16 << 5) | rt);
     } else {

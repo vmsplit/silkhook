@@ -90,18 +90,23 @@ static inline void __emit_mov64_opt(struct __codebuf *cb, unsigned reg, uint64_t
     int first = 1;
     unsigned shift;
 
-    if (imm == 0) {
+    if (imm == 0)
+    {
         __CODEBUF_EMIT(cb, __MOVZ(reg, 0, 0));
         return;
     }
 
-    for (shift = 0; shift < 64; shift += 16) {
+    for (shift = 0; shift < 64; shift += 16)
+    {
         uint16_t chunk = (imm >> shift) & 0xFFFF;
-        if (chunk != 0) {
-            if (first) {
+        if (chunk != 0)
+        {
+            if (first)
+            {
                 __CODEBUF_EMIT(cb, __MOVZ(reg, chunk, shift));
                 first = 0;
-            } else {
+            }
+            else {
                 __CODEBUF_EMIT(cb, __MOVK(reg, chunk, shift));
             }
         }
