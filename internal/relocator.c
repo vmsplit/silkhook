@@ -29,7 +29,7 @@
 static void __reloc_b_cond(uint32_t instr, uintptr_t targ, struct __codebuf *cb)
 {
     uint32_t inv = instr ^ 0x1;
-    uint32_t cond =  inv & 0xF;
+    uint32_t cond = inv  & 0xF;
     uint32_t skip = __B_COND_OP | ((5 & 0x7FFFF) << 5) | cond;
     __CODEBUF_EMIT(cb, skip);
     __EMIT_ABS_JMP(cb, targ);
@@ -38,8 +38,8 @@ static void __reloc_b_cond(uint32_t instr, uintptr_t targ, struct __codebuf *cb)
 static void __reloc_cb(uint32_t instr, uintptr_t targ, struct __codebuf *cb)
 {
     uint32_t inv = instr ^ (1u << 24);
-    uint32_t sf  = inv & (1u << 31);
-    uint32_t op  = inv & (1u << 24);
+    uint32_t sf  = inv   & (1u << 31);
+    uint32_t op  = inv   & (1u << 24);
     uint32_t rt  = __RT(inv);
     uint32_t skip = 0x34000000u | sf | op | ((5 & 0x7FFFF) << 5) | rt;
     __CODEBUF_EMIT(cb, skip);
@@ -64,14 +64,12 @@ static void __reloc_ldr_lit(uint32_t instr, uintptr_t targ, struct __codebuf *cb
     uint32_t opc = __OPC(instr);
     uint32_t v   = __V(instr);
 
-    __EMIT_MOV64(cb, 16, targ);
+    __EMIT_MOV64_OPT(cb, 16, targ);
 
-    if (v)
-    {
+    if (v) {
         uint32_t sz = (opc == 0) ? 2   : (opc == 1) ? 3 : 4;
         __CODEBUF_EMIT(cb, 0x3C400200u | (sz << 30) | (16 << 5) | rt);
-    }
-    else {
+    } else {
         __CODEBUF_EMIT(cb, (opc ?  0xF9400200u : 0xB9400200u) | (16 << 5) | rt);
     }
 }
@@ -116,11 +114,11 @@ int __relocate(uint32_t instr, uintptr_t pc, struct __codebuf *cb)
         break;
     case INSTR_ADR:
         targ = pc + __DEC_ADR(instr);
-        __EMIT_MOV64(cb, __RD(instr), targ);
+        __EMIT_MOV64_OPT(cb, __RD(instr), targ);
         break;
     case INSTR_ADRP:
         targ = (pc & ~0xFFFull) + __DEC_ADRP(instr);
-        __EMIT_MOV64(cb, __RD(instr), targ);
+        __EMIT_MOV64_OPT(cb, __RD(instr), targ);
         break;
     case INSTR_LDR_LIT:
         targ = pc + __DEC_LDR_LIT(instr);

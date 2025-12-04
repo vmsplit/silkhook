@@ -64,6 +64,9 @@ struct __codebuf {
     __CODEBUF_EMIT((cb), __MOVK((reg), ((imm) >> 48) & 0xFFFF, 48)); \
 } while (0)
 
+#define __EMIT_MOV64_OPT(cb, reg, imm) \
+    __emit_mov64_opt((cb), (reg), (imm))
+
 #define __EMIT_ABS_JMP(cb, targ) do {  \
     __CODEBUF_EMIT((cb), __LDR_LIT(16, 8)); \
     __CODEBUF_EMIT((cb), __BR(16));    \
@@ -71,16 +74,39 @@ struct __codebuf {
 } while (0)
 
 #define __EMIT_SAFE_JMP(cb, targ) do { \
-    __CODEBUF_EMIT((cb), __B(8));    \
-    __CODEBUF_EMIT((cb), __RET());   \
-    __CODEBUF_EMIT((cb), __PUSH(0)); \
+    __CODEBUF_EMIT((cb), __B(8));      \
+    __CODEBUF_EMIT((cb), __RET());     \
+    __CODEBUF_EMIT((cb), __PUSH(0));   \
     __CODEBUF_EMIT((cb), __MOVZ(0, ((targ) >>  0) & 0xFFFF,  0)); \
     __CODEBUF_EMIT((cb), __MOVK(0, ((targ) >> 16) & 0xFFFF, 16)); \
     __CODEBUF_EMIT((cb), __MOVK(0, ((targ) >> 32) & 0xFFFF, 32)); \
     __CODEBUF_EMIT((cb), __MOVK(0, ((targ) >> 48) & 0xFFFF, 48)); \
-    __CODEBUF_EMIT((cb), __BR(0));   \
-    __CODEBUF_EMIT((cb), __POP(0));  \
+    __CODEBUF_EMIT((cb), __BR(0));     \
+    __CODEBUF_EMIT((cb), __POP(0));    \
 } while (0)
+
+static inline void __emit_mov64_opt(struct __codebuf *cb, unsigned reg, uint64_t imm)
+{
+    int first = 1;
+    unsigned shift;
+
+    if (imm == 0) {
+        __CODEBUF_EMIT(cb, __MOVZ(reg, 0, 0));
+        return;
+    }
+
+    for (shift = 0; shift < 64; shift += 16) {
+        uint16_t chunk = (imm >> shift) & 0xFFFF;
+        if (chunk != 0) {
+            if (first) {
+                __CODEBUF_EMIT(cb, __MOVZ(reg, chunk, shift));
+                first = 0;
+            } else {
+                __CODEBUF_EMIT(cb, __MOVK(reg, chunk, shift));
+            }
+        }
+    }
+}
 
 
 #endif /* _SILKHOOK_ASSEMBLER_H_ */
