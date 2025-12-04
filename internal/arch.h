@@ -14,6 +14,17 @@
     #include <stdint.h>
 #endif
 
+#if defined(__ARM_FEATURE_PAC_DEFAULT) && !defined(__KERNEL__)
+static inline void *__strip_pac(void *ptr)
+{
+    void *stripped;
+    __asm__ volatile("xpaci %0" : "=r"(stripped) : "0"(ptr));
+    return stripped;
+}
+#else
+#define __strip_pac(ptr) (ptr)
+#endif
+
 /* ─────────────────────────────────────────────────────────────────────────────
  * branch instructions
  *

@@ -108,6 +108,11 @@ int silkhook_create(void *targ, void *detour, struct silkhook_hook *h, void **or
     if (!targ || !detour || !h)
         return SILKHOOK_ERR_INVAL;
 
+    /*  if a PAC sig is present (which is might very well be
+     *  on ARMv8.3+ devices),  we can strip that here  */
+    targ   = __strip_pac(targ);
+    detour = __strip_pac(detour);
+
     __LOCK();
     memset(h, 0, sizeof(*h));
 
