@@ -1,43 +1,33 @@
 /*
  * silkhook     - miniature arm64 hooking lib
- * trampoline.h - trampoline gen
+ * trampoline.h - trampoline management
  *
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef _TRAMPOLINE_H_
-#define _TRAMPOLINE_H_
+#ifndef _SILKHOOK_TRAMPOLINE_H_
+#define _SILKHOOK_TRAMPOLINE_H_
 
-#include <stdint.h>
-#include <stddef.h>
+#ifdef __KERNEL__
+    #include <linux/types.h>
+#else
+    #include <stdint.h>
+    #include <stddef.h>
+#endif
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * trampoline layout
  *
- * orig func (post-hook):
- *   [0] ldr    x16, #8         ─┐
- *   [1] br     x16              ├─> jump to detour
- *   [2] <detour_lo>             │
- *   [3] <detour_hi>            ─┘
- *   [4] ...  rest of func ...
- *
- * trampoline:
- *   [0] <relocated instr 0>    ─┐
- *   [1] <relocated instr 1>     ├─> orig prologue
- *   [2] <relocated instr 2>     │
- *   [3] <relocated instr 3>    ─┘
- *   [4] ldr    x16, #8         ─┐
- *   [5] br     x16              ├─> jump back to targ+16
- *   [6] <targ+16 lo>            │
- *   [7] <targ+16 hi>           ─┘
- *
- * exec flow:
- *   caller -> targ -> detour -> trampoline -> targ+16 -> ...
+ *   [0.. n]   relocated orig instrs
+ *   [n+1]     ldr x16, [pc, #8]
+ *   [n+2]     br  x16
+ *   [n+3]     <targ + HOOK_N_BYTE low>
+ *   [n+4]     <targ + HOOK_N_BYTE high>
  * ───────────────────────────────────────────────────────────────────────────── */
 
-int trampoline_create(uintptr_t targ, size_t hook_size, uintptr_t *out);
-int trampoline_destroy(uintptr_t trampoline);
+int __trampoline_create(uintptr_t targ, size_t n_bytes, uintptr_t *out);
+int __trampoline_destroy(uintptr_t tramp);
 
 
-#endif /* _TRAMPOLINE_H_ */
+#endif /* _SILKHOOK_TRAMPOLINE_H_ */

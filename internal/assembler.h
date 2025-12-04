@@ -1,37 +1,86 @@
 /*
  * silkhook    - miniature arm64 hooking lib
- * assembler.h - code gen utils
+ * assembler. h - code generation
  *
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef _ASSEMBLER_H_
-#define _ASSEMBLER_H_
+#ifndef _SILKHOOK_ASSEMBLER_H_
+#define _SILKHOOK_ASSEMBLER_H_
 
-#include <stdint.h>
-#include <stddef.h>
+#ifdef __KERNEL__
+    #include <linux/types.h>
+#else
+    #include <stdint.h>
+    #include <stddef.h>
+#endif
+
+#include "arch.h"
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * code buffer - tiny code emitter
+ * code buffer
  * ───────────────────────────────────────────────────────────────────────────── */
 
-struct codebuf {
-    uint32_t    *code;
-    size_t      capacity;
-    size_t      count;
-    uintptr_t   base;
+struct __codebuf {
+    uint32_t    *buf;
+    size_t      cap;
+    size_t      len;
+    uintptr_t   pc;
 };
 
+#define __CODEBUF_INIT(cb, _buf, _cap, _pc) do { \
+    (cb)->buf = (_buf); \
+    (cb)->cap = (_cap); \
+    (cb)->len = 0; \
+    (cb)->pc  = (_pc);  \
+} while (0)
 
-void codebuf_init(struct codebuf *cb, uint32_t *buf, size_t capacity, uintptr_t base);
-void codebuf_emit(struct codebuf *cb, uint32_t instr);
-void codebuf_emit_addr(struct codebuf *cb, uintptr_t addr);
+#define __CODEBUF_EMIT(cb, instr) do { \
+    if ((cb)->len < (cb)->cap)         \
+        (cb)->buf[(cb)->len++] = (instr); \
+} while (0)
 
-uintptr_t codebuf_pc(const struct codebuf *cb);
-size_t codebuf_size(const struct codebuf *cb);
+#define __CODEBUF_EMIT_ADDR(cb, addr) do { \
+    __CODEBUF_EMIT((cb), (uint32_t)((addr)  & 0xFFFFFFFF)); \
+    __CODEBUF_EMIT((cb), (uint32_t)((addr) >> 32));         \
+} while (0)
 
-void emit_absolute_jump(struct codebuf *cb, uintptr_t target);
+#define __CODEBUF_PC(cb) \
+    ((cb)->pc + ((cb)->len * 4))
+
+#define __CODEBUF_SIZE(cb) \
+    ((cb)->len * 4)
 
 
-#endif /* _ASSEMBLER_H_ */
+/* ─────────────────────────────────────────────────────────────────────────────
+ * emitters
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#define __EMIT_MOV64(cb, reg, imm) do { \
+    __CODEBUF_EMIT((cb), __MOVZ((reg), ((imm) >>  0) & 0xFFFF,  0)); \
+    __CODEBUF_EMIT((cb), __MOVK((reg), ((imm) >> 16) & 0xFFFF, 16)); \
+    __CODEBUF_EMIT((cb), __MOVK((reg), ((imm) >> 32) & 0xFFFF, 32)); \
+    __CODEBUF_EMIT((cb), __MOVK((reg), ((imm) >> 48) & 0xFFFF, 48)); \
+} while (0)
+
+#define __EMIT_ABS_JMP(cb, targ) do {  \
+    __CODEBUF_EMIT((cb), __LDR_LIT(16, 8)); \
+    __CODEBUF_EMIT((cb), __BR(16));    \
+    __CODEBUF_EMIT_ADDR((cb), (targ)); \
+} while (0)
+
+#define __EMIT_SAFE_JMP(cb, targ) do { \
+    __CODEBUF_EMIT((cb), __B(8));    \
+    __CODEBUF_EMIT((cb), __RET());   \
+    __CODEBUF_EMIT((cb), __PUSH(0)); \
+    __CODEBUF_EMIT((cb), __MOVZ(0, ((targ) >>  0) & 0xFFFF,  0)); \
+    __CODEBUF_EMIT((cb), __MOVK(0, ((targ) >> 16) & 0xFFFF, 16)); \
+    __CODEBUF_EMIT((cb), __MOVK(0, ((targ) >> 32) & 0xFFFF, 32)); \
+    __CODEBUF_EMIT((cb), __MOVK(0, ((targ) >> 48) & 0xFFFF, 48)); \
+    __CODEBUF_EMIT((cb), __BR(0));   \
+    __CODEBUF_EMIT((cb), __POP(0));  \
+} while (0)
+
+
+#endif /* _SILKHOOK_ASSEMBLER_H_ */

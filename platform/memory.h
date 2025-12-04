@@ -1,32 +1,39 @@
 /*
  * silkhook  - miniature arm64 hooking lib
- * memory.h  - mem operations
+ * memory.h  - memory operations
  *
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef _MEMORY_H_
-#define _MEMORY_H_
+#ifndef _SILKHOOK_MEMORY_H_
+#define _SILKHOOK_MEMORY_H_
 
-#include <stddef.h>
+#ifdef __KERNEL__
+    #include <linux/types.h>
+#else
+    #include <stddef.h>
+#endif
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * mem protection
+ * memory protection
  *
  *   normal:       R - X   <- can't write
- *   during patch: R W X   <- mprotect enables write
+ *   during patch: R W X   <- mprotect / fixmap
  *   after patch:  R - X   <- restore
  * ───────────────────────────────────────────────────────────────────────────── */
 
-int mem_protect(void *addr, size_t len, int prot);
-int mem_make_writable(void *addr, size_t len);
-int mem_make_exec(void *addr, size_t len);
+int __mem_make_rw(void *addr, size_t len);
+int __mem_make_rx(void *addr, size_t len);
 
-int mem_alloc_exec(size_t size, void **out);
-int mem_free(void *ptr, size_t size);
+int __mem_alloc_exec(size_t size, void **out);
+int __mem_free(void *ptr, size_t size);
 
-void flush_icache(void *addr, size_t len);
+void __flush_icache(void *addr, size_t len);
+
+#ifdef __KERNEL__
+int __mem_write_text(void *dst, const void *src, size_t len);
+#endif
 
 
-#endif /* _MEMORY_H_ */
+#endif /* _SILKHOOK_MEMORY_H_ */

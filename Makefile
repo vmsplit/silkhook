@@ -1,51 +1,65 @@
 CC      := clang
+AS      := clang
 AR      := ar
 CFLAGS  := -std=c99 -Wall -Wextra -Wpedantic -O2 -fPIC
+ASFLAGS := -c
 LDFLAGS := -lpthread
 
-SRC_DIR := .
 BUILD   := build
 
-SRCS := \
-  $(SRC_DIR)/silkhook.c \
-  $(SRC_DIR)/internal/assembler.c \
-  $(SRC_DIR)/internal/relocator.c \
-  $(SRC_DIR)/internal/trampoline.c \
-  $(SRC_DIR)/platform/memory.c
+C_SRCS  := silkhook.c \
+           internal/trampoline.c \
+           internal/relocator.c \
+           platform/user/memory.c
 
-OBJS := $(patsubst $(SRC_DIR)/%.c,$(BUILD)/%.o,$(SRCS))
-DEPS := $(OBJS:.o=.d)
+S_SRCS  := internal/arm64.S
 
-LIB_A  := $(BUILD)/libsilkhook.a
-LIB_SO := $(BUILD)/libsilkhook.so
+C_OBJS  := $(C_SRCS:%.c=$(BUILD)/%.o)
+S_OBJS  := $(S_SRCS:%.S=$(BUILD)/%.o)
+OBJS    := $(C_OBJS) $(S_OBJS)
 
-.PHONY: all clean example test
+.PHONY: all clean example test module module-clean
 
-all: $(LIB_A) $(LIB_SO)
+all: $(BUILD)/libsilkhook.a $(BUILD)/libsilkhook.so
 
-$(LIB_A): $(OBJS)
+$(BUILD)/libsilkhook.a: $(OBJS)
 	@mkdir -p $(@D)
 	$(AR) rcs $@ $^
 
-$(LIB_SO): $(OBJS)
+$(BUILD)/libsilkhook.so: $(OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -shared -o $@ $^ $(LDFLAGS)
 
-$(BUILD)/%.o: $(SRC_DIR)/%.c
+$(BUILD)/%.o: %.c
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
 
--include $(DEPS)
+$(BUILD)/%.o: %.S
+	@mkdir -p $(@D)
+	$(AS) $(ASFLAGS) -o $@ $<
+
+-include $(C_OBJS:.o=.d)
 
 clean:
 	rm -rf $(BUILD)
 
-example: $(LIB_A)
-	@mkdir -p $(BUILD)
+example: $(BUILD)/libsilkhook.a
 	$(CC) -std=c99 -Wall -O0 -fno-inline -g \
-		-o $(BUILD)/example \
-		examples/hook.c \
+		-o $(BUILD)/example examples/hook.c \
 		-L$(BUILD) -lsilkhook $(LDFLAGS)
 
 test: example
 	LD_LIBRARY_PATH=$(BUILD) $(BUILD)/example
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Kernel module
+# ─────────────────────────────────────────────────────────────────────────────
+
+KDIR ?= /lib/modules/$(shell uname -r)/build
+
+module:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+
+module-clean:
+	$(MAKE) -C $(KDIR) M=$(PWD) clean

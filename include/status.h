@@ -1,41 +1,39 @@
 /*
- * silkhook - miniature arm64 hooking lib
- * status.h - status codes
+ * silkhook  - miniature arm64 hooking lib
+ * status.h  - status codes
  *
  * SPDX-License-Identifier: MIT
  */
 
-#ifndef _STATUS_H_
-#define _STATUS_H_
+#ifndef _SILKHOOK_STATUS_H_
+#define _SILKHOOK_STATUS_H_
 
 
-enum status {
-    OK              = 0,
-    ERR_INVALID_ARG = -1,
-    ERR_ALLOC       = -2,
-    ERR_PROT        = -3,
-    ERR_EXISTS      = -4,
-    ERR_NOT_HOOKED  = -5,
-    ERR_BAD_INSTR   = -6,
-    ERR_TRAMP       = -7,
+enum silkhook_status {
+    SILKHOOK_OK         =  0,
+    SILKHOOK_ERR_INVAL  = -1,
+    SILKHOOK_ERR_NOMEM  = -2,
+    SILKHOOK_ERR_PROT   = -3,
+    SILKHOOK_ERR_EXISTS = -4,
+    SILKHOOK_ERR_NOENT  = -5,
+    SILKHOOK_ERR_INSTR  = -6,
 };
 
 
-static inline const char *status_str(enum status s)
+static inline const char *silkhook_strerror(int e)
 {
-    switch (s)
+    switch (e)
     {
-        case OK:              return "ok";
-        case ERR_INVALID_ARG: return "invalid argument";
-        case ERR_ALLOC:       return "allocation failure";
-        case ERR_PROT:        return "protection failure";
-        case ERR_EXISTS:      return "pre-existing hook";
-        case ERR_NOT_HOOKED:  return "hook failure";
-        case ERR_BAD_INSTR:   return "unsupported instruction";
-        case ERR_TRAMP:       return "trampoline failure";
-        default:              return "unknown error (this is bad)";
+        case SILKHOOK_OK:          return "ok";
+        case SILKHOOK_ERR_INVAL:   return "invalid argument";
+        case SILKHOOK_ERR_NOMEM:   return "out of memory";
+        case SILKHOOK_ERR_PROT:    return "protection failure";
+        case SILKHOOK_ERR_EXISTS:  return "hook exists";
+        case SILKHOOK_ERR_NOENT:   return "not found";
+        case SILKHOOK_ERR_INSTR:   return "bad instruction";
+        default:                   return "unknown";
     }
 }
 
 
-#endif /* _STATUS_H_ */
+#endif /* _SILKHOOK_STATUS_H_ */

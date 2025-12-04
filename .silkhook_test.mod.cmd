@@ -1,0 +1,1 @@
+savedcmd_/mnt/silkhook/silkhook_test.mod := printf '%s\n'   silkhook_kmod.o internal/trampoline.o internal/relocator.o platform/kernel/memory.o platform/kernel/ksyms.o | awk '!x[$$0]++ { print("/mnt/silkhook/"$$0) }' > /mnt/silkhook/silkhook_test.mod

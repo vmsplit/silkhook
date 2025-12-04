@@ -1,6 +1,6 @@
 /*
  * silkhook   - miniature arm64 hooking lib
- * silkhook.c - core API
+ * silkhook.c - core implementation
  *
  * SPDX-License-Identifier: MIT
  */
@@ -8,27 +8,40 @@
 #include "include/silkhook.h"
 #include "include/status.h"
 #include "include/types.h"
-#include "internal/trampoline.h"
-#include "internal/assembler.h"
 #include "internal/arch.h"
+#include "internal/assembler.h"
+#include "internal/trampoline.h"
 #include "platform/memory.h"
 
-#include <string.h>
-#include <pthread.h>
+#ifdef __KERNEL__
+    #include <linux/mutex.h>
+    #include <linux/string.h>
+    static DEFINE_MUTEX(__g_lock);
+    #define __LOCK()    mutex_lock(&__g_lock)
+    #define __UNLOCK()  mutex_unlock(&__g_lock)
+#else
+    #include <pthread.h>
+    #include <string.h>
+    static pthread_mutex_t __g_lock = PTHREAD_MUTEX_INITIALIZER;
+    #define __LOCK()    pthread_mutex_lock(&__g_lock)
+    #define __UNLOCK()  pthread_mutex_unlock(&__g_lock)
+#endif
 
 
-/*  linked list registry for hooks  */
-static struct hook *g_hooks = NULL;
+/* ─────────────────────────────────────────────────────────────────────────────
+ * registry
+ * ───────────────────────────────────────────────────────────────────────────── */
 
-static void _registry_add(struct hook *h)
+static struct silkhook_hook *__g_hooks = NULL;
+
+#define __REG_ADD(h) do { \
+    (h)->next = __g_hooks; \
+    __g_hooks = (h); \
+} while (0)
+
+static void __reg_del(struct silkhook_hook *h)
 {
-    h->next = g_hooks;
-    g_hooks = h;
-}
-
-static void _registry_remove(struct hook *h)
-{
-    struct hook **pp = &g_hooks;
+    struct silkhook_hook **pp = &__g_hooks;
     while (*pp)
     {
         if (*pp == h)
@@ -41,292 +54,293 @@ static void _registry_remove(struct hook *h)
     }
 }
 
-
-/*  mutex locks  */
-static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
-
-#define LOCK()    pthread_mutex_lock(&g_lock)
-#define UNLOCK()  pthread_mutex_unlock(&g_lock)
-
-
-static struct hook *_registry_find(uintptr_t targ)
+static struct silkhook_hook *__reg_find(uintptr_t targ)
 {
-    for (struct hook *h = g_hooks; h; h = h->next)
-    {
+    for (struct silkhook_hook *h = __g_hooks; h; h = h->next)
         if (h->targ == targ)
             return h;
-    }
     return NULL;
 }
 
 
-struct hook *hook_find(void *targ)
+/* ─────────────────────────────────────────────────────────────────────────────
+ * internal write helper
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+static int __write_hook(uintptr_t targ, const void *code, size_t len)
 {
-    struct hook *h;
-    LOCK();
-    h = _registry_find((uintptr_t) targ);
-    UNLOCK();
-    return h;
+#ifdef __KERNEL__
+    return __mem_write_text((void *) targ, code, len);
+#else
+    int r = __mem_make_rw((void *) targ, len);
+    if (r != SILKHOOK_OK)
+        return r;
+    memcpy((void *) targ, code, len);
+    __flush_icache((void *) targ, len);
+    return SILKHOOK_OK;
+#endif
 }
 
 
-size_t hook_count(void)
+/* ─────────────────────────────────────────────────────────────────────────────
+ * lifecycle
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+int silkhook_init(void)
 {
-    size_t count = 0;
-    LOCK();
-    for (struct hook *h = g_hooks;  h; h = h->next)
-        count++;
-    UNLOCK();
-    return count;
+    return SILKHOOK_OK;
+}
+
+void silkhook_shutdown(void)
+{
+    silkhook_unhook_all();
 }
 
 
-int unhook_all(void)
+/* ─────────────────────────────────────────────────────────────────────────────
+ * staged API
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+int silkhook_create(void *targ, void *detour, struct silkhook_hook *h, void **orig)
 {
-    int last_err = OK;
-
-    LOCK();
-    while (g_hooks)
-    {
-        struct hook *h = g_hooks;
-
-        if (h->active)
-        {
-            int status = mem_make_writable((void *) h->targ, HOOK_SIZE);
-            if (status == OK)
-            {
-                memcpy((void *) h->targ, h->orig_instrs, HOOK_SIZE);
-                flush_icache((void *) h->targ, HOOK_SIZE);
-                h->active = false;
-            }
-            else {
-                last_err = status;
-            }
-        }
-
-        g_hooks = h->next;
-        h->next = NULL;
-
-        if (h->trampoline)
-        {
-            trampoline_destroy(h->trampoline);
-            h->trampoline = 0;
-        }
-    }
-    UNLOCK();
-
-    return last_err;
-}
-
-
-int init(void)
-{
-    return OK;
-}
-
-void shutdown(void)
-{
-    /*  literally just remove all hooks!  */
-    unhook_all();
-}
-
-int hook_create(void *targ, void *detour, struct hook *h, void **orig)
-{
-    int status;
+    int r;
 
     if (!targ || !detour || !h)
-        return ERR_INVALID_ARG;
+        return SILKHOOK_ERR_INVAL;
 
-    LOCK();
-
+    __LOCK();
     memset(h, 0, sizeof(*h));
 
-    h->targ      = (uintptr_t)targ;
-    h->detour    = (uintptr_t)detour;
-    h->orig_size = HOOK_SIZE;
+    h->targ      = (uintptr_t) targ;
+    h->detour    = (uintptr_t) detour;
+    h->orig_size = SILKHOOK_HOOK_N_BYTE;
     h->active    = false;
+    h->next      = NULL;
 
-    memcpy(h->orig_instrs, targ, HOOK_SIZE);
+    memcpy(h->orig, targ, SILKHOOK_HOOK_N_BYTE);
 
-    status = trampoline_create(h->targ, h->orig_size, &h->trampoline);
-    if (status != OK)
+    r = __trampoline_create(h->targ, h->orig_size, &h->trampoline);
+    if (r != SILKHOOK_OK)
     {
-        UNLOCK();
-        return status;
+        __UNLOCK();
+        return r;
     }
 
     if (orig)
         *orig = (void *) h->trampoline;
 
-    UNLOCK();
-    return OK;
+    __UNLOCK();
+    return SILKHOOK_OK;
 }
 
-int hook_install(struct hook *h)
+int silkhook_enable(struct silkhook_hook *h)
 {
-    int status;
-    uint32_t hook_code[HOOK_INSTR_COUNT];
-    struct codebuf cb;
-
-    if (! h)
-        return ERR_INVALID_ARG;
-
-    LOCK();
-
-    if (h->active) {
-        UNLOCK();
-        return ERR_EXISTS;
-    }
-
-    if (_registry_find(h->targ)) {
-        UNLOCK();
-        return ERR_EXISTS;
-    }
-
-    status = mem_make_writable((void *)h->targ, HOOK_SIZE);
-    if (status != OK) {
-        UNLOCK();
-        return status;
-    }
-
-    codebuf_init(&cb, hook_code, HOOK_INSTR_COUNT, h->targ);
-    emit_absolute_jump(&cb, h->detour);
-
-    memcpy((void *)h->targ, hook_code, HOOK_SIZE);
-    flush_icache((void *)h->targ, HOOK_SIZE);
-
-    h->active = true;
-    _registry_add(h);
-
-    UNLOCK();
-    return OK;
-}
-
-int hook_remove(struct hook *h)
-{
-    int status;
+    uint32_t code[SILKHOOK_HOOK_N_INSTR];
+    int r;
 
     if (!h)
-        return ERR_INVALID_ARG;
+        return SILKHOOK_ERR_INVAL;
 
-    LOCK();
+    __LOCK();
+
+    if (h->active || __reg_find(h->targ))
+    {
+        __UNLOCK();
+        return SILKHOOK_ERR_EXISTS;
+    }
+
+    __ABS_JMP(code, h->detour);
+
+    r = __write_hook(h->targ, code, SILKHOOK_HOOK_N_BYTE);
+    if (r != SILKHOOK_OK)
+    {
+        __UNLOCK();
+        return r;
+    }
+
+    h->active = true;
+    __REG_ADD(h);
+
+    __UNLOCK();
+    return SILKHOOK_OK;
+}
+
+int silkhook_disable(struct silkhook_hook *h)
+{
+    int r;
+
+    if (!h)
+        return SILKHOOK_ERR_INVAL;
+
+    __LOCK();
 
     if (!h->active)
     {
-        UNLOCK();
-        return ERR_NOT_HOOKED;
+        __UNLOCK();
+        return SILKHOOK_ERR_NOENT;
     }
 
-    status = mem_make_writable((void *) h->targ, HOOK_SIZE);
-    if (status != OK)
+    r = __write_hook(h->targ, h->orig, SILKHOOK_HOOK_N_BYTE);
+    if (r != SILKHOOK_OK)
     {
-        UNLOCK();
-        return status;
+        __UNLOCK();
+        return r;
     }
-
-    memcpy((void *) h->targ, h->orig_instrs, HOOK_SIZE);
-    flush_icache((void *) h->targ, HOOK_SIZE);
 
     h->active = false;
+    __reg_del(h);
 
-    UNLOCK();
-    return OK;
+    __UNLOCK();
+    return SILKHOOK_OK;
 }
 
-int hook_destroy(struct hook *h)
+int silkhook_destroy(struct silkhook_hook *h)
 {
     if (!h)
-        return ERR_INVALID_ARG;
+        return SILKHOOK_ERR_INVAL;
 
-    LOCK();
+    __LOCK();
 
     if (h->active)
     {
-        int status = mem_make_writable((void *) h->targ, HOOK_SIZE);
-        if (status == OK)
-        {
-            memcpy((void *) h->targ, h->orig_instrs, HOOK_SIZE);
-            flush_icache((void *) h->targ, HOOK_SIZE);
-            h->active =  false;
-        }
-        _registry_remove(h);
+        __write_hook(h->targ, h->orig, SILKHOOK_HOOK_N_BYTE);
+        h->active = false;
+        __reg_del(h);
     }
 
     if (h->trampoline)
     {
-        trampoline_destroy(h->trampoline);
+        __trampoline_destroy(h->trampoline);
         h->trampoline = 0;
     }
 
-    UNLOCK();
-    return OK;
+    __UNLOCK();
+    return SILKHOOK_OK;
 }
 
-int hook(void *targ, void *detour, struct hook *h, void **orig)
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * simple API
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+int silkhook_hook(void *targ, void *detour, struct silkhook_hook *h, void **orig)
 {
-    int status;
+    int r = silkhook_create(targ, detour, h, orig);
+    if (r != SILKHOOK_OK)
+        return r;
 
-    status = hook_create(targ, detour, h, orig);
-    if (status != OK)
-        return status;
-
-    status = hook_install(h);
-    if (status != OK)
+    r = silkhook_enable(h);
+    if (r != SILKHOOK_OK)
     {
-        hook_destroy(h);
-        return status;
+        silkhook_destroy(h);
+        return r;
     }
 
-    return OK;
+    return SILKHOOK_OK;
 }
 
-int unhook(struct hook *h)
+int silkhook_unhook(struct silkhook_hook *h)
 {
-    int status;
-
-    status = hook_remove(h);
-    if (status != OK && status != ERR_NOT_HOOKED)
-        return status;
-
-    return hook_destroy(h);
+    int r = silkhook_disable(h);
+    if (r != SILKHOOK_OK && r != SILKHOOK_ERR_NOENT)
+        return r;
+    return silkhook_destroy(h);
 }
 
-int hook_batch(struct hook_desc *descs, size_t count, struct hook *hooks)
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * batch API
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+int silkhook_hook_batch(struct silkhook_desc *descs, size_t n, struct silkhook_hook *hooks)
 {
-    int status;
+    int r;
     size_t i;
 
-    if (!descs || !hooks || count == 0)
-        return ERR_INVALID_ARG;
+    if (!descs || !hooks || n == 0)
+        return SILKHOOK_ERR_INVAL;
 
-    for (i = 0; i < count; i++)
+    for (i = 0; i < n; i++)
     {
-        status = hook(descs[i].targ, descs[i].detour, &hooks[i], descs[i].orig);
-        if (status != OK)
-            goto rollback;
+        r = silkhook_hook(descs[i].targ, descs[i].detour, &hooks[i], descs[i].orig);
+        if (r != SILKHOOK_OK)
+            goto fail;
     }
+    return SILKHOOK_OK;
 
-    return OK;
-
-rollback:
-    while (i-- >0)
-        unhook(&hooks[i]);
-    return status;
+fail:
+    while (i--)
+        silkhook_unhook(&hooks[i]);
+    return r;
 }
 
-int unhook_batch(struct hook *hooks, size_t count)
+int silkhook_unhook_batch(struct silkhook_hook *hooks, size_t n)
 {
-    int status, last_err = OK;
+    int r, last = SILKHOOK_OK;
 
-    if (!hooks || count == 0)
-        return ERR_INVALID_ARG;
+    if (!hooks || n == 0)
+        return SILKHOOK_ERR_INVAL;
 
-    for (size_t i = 0; i < count; i++)
+    for (size_t i = 0; i < n; i++)
     {
-        status = unhook(&hooks[i]);
-        if (status != OK)
-            last_err = status;
+        r = silkhook_unhook(&hooks[i]);
+        if (r != SILKHOOK_OK)
+            last = r;
     }
+    return last;
+}
 
-    return last_err;
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * query API
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+size_t silkhook_count(void)
+{
+    size_t n = 0;
+    __LOCK();
+    for (struct silkhook_hook *h = __g_hooks; h; h = h->next)
+        n++;
+    __UNLOCK();
+    return n;
+}
+
+struct silkhook_hook *silkhook_find(void *targ)
+{
+    struct silkhook_hook *h;
+    __LOCK();
+    h = __reg_find((uintptr_t)targ);
+    __UNLOCK();
+    return h;
+}
+
+int silkhook_unhook_all(void)
+{
+    int last = SILKHOOK_OK;
+
+    __LOCK();
+    while (__g_hooks)
+    {
+        struct silkhook_hook *h = __g_hooks;
+
+        if (h->active)
+        {
+            int r = __write_hook(h->targ, h->orig, SILKHOOK_HOOK_N_BYTE);
+            if (r != SILKHOOK_OK)
+                last = r;
+            h->active = false;
+        }
+
+        __g_hooks = h->next;
+        h->next = NULL;
+
+        if (h->trampoline)
+        {
+            __trampoline_destroy(h->trampoline);
+            h->trampoline = 0;
+        }
+    }
+    __UNLOCK();
+
+    return last;
 }

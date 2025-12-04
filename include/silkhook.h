@@ -1,12 +1,17 @@
 /*
- * hookie   - miniature arm64 hooking lib
- * hookie.h - public API
+ * silkhook   - miniature arm64 hooking lib
+ * silkhook.h - public API
  *
  * SPDX-License-Identifier: MIT
  */
 
 #ifndef _SILKHOOK_H_
 #define _SILKHOOK_H_
+
+#ifdef __KERNEL__
+    #include <linux/types.h>
+    #include <linux/stddef.h>
+#endif
 
 #include "types.h"
 #include "status.h"
@@ -17,75 +22,97 @@ extern "C" {
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * API
- *
- *   struct hook h;
- *   void *orig;
- *
- *   hook(targ, detour, &h, &orig);
- *   unhook(&h);
- *
- * simple:                    staged:
- *   init()                     init()
- *       │                          │
- *   hook()                     hook_create()
- *       │                          │
- *       │                      hook_install() <──┐
- *       │                          │             │
- *       │                      hook_remove() ────┘
- *       │                          │
- *   unhook()                   hook_destroy()
- *       │                          │
- *   shutdown()                 shutdown()
+ * lifecycle
  * ───────────────────────────────────────────────────────────────────────────── */
 
-int init(void);
-void shutdown(void);
+int silkhook_init(void);
+void silkhook_shutdown(void);
 
-int hook_create(void *targ, void *detour, struct hook *h, void **orig);
-int hook_install(struct hook *h);
-int hook_remove(struct hook *h);
-int hook_destroy(struct hook *h);
 
-int hook(void *targ, void *detour, struct hook *h, void **orig);
-int unhook(struct hook *h);
+/* ─────────────────────────────────────────────────────────────────────────────
+ * simple API
+ *
+ *   struct silkhook_hook h;
+ *   void *orig;
+ *
+ *   silkhook_hook(targ, detour, &h, &orig);
+ *   silkhook_unhook(&h);
+ * ───────────────────────────────────────────────────────────────────────────── */
 
-struct hook *hook_find(void *targ);
+int silkhook_hook(void *targ, void *detour, struct silkhook_hook *h, void **orig);
+int silkhook_unhook(struct silkhook_hook *h);
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * staged API
+ *
+ *   silkhook_init()
+ *       │
+ *   silkhook_create()
+ *       │
+ *   silkhook_enable() <──┐
+ *       │                │
+ *   silkhook_disable() ──┘
+ *       │
+ *   silkhook_destroy()
+ *       │
+ *   silkhook_shutdown()
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+int silkhook_create(void *targ, void *detour, struct silkhook_hook *h, void **orig);
+int silkhook_enable(struct silkhook_hook *h);
+int silkhook_disable(struct silkhook_hook *h);
+int silkhook_destroy(struct silkhook_hook *h);
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * batch API
  *
- *   struct hook_desc descs[] = {
- *       { (void *) open,  _hooked_open,  &orig_open  },
- *       { (void *) read,  _hooked_read,  &orig_read  },
- *       { (void *) write, _hooked_write, &orig_write },
+ *   struct silkhook_desc descs[] = {
+ *       { (void *) open,  my_open,  &orig_open  },
+ *       { (void *) read,  my_read,  &orig_read  },
  *   };
- *   struct hook hooks[3];
- *   hook_batch(descs, 3, hooks);
- *   ...
- *   unhook_batch(hooks, 3);
+ *   struct silkhook_hook hooks[2];
+ *
+ *   silkhook_hook_batch(descs, 2, hooks);
+ *   silkhook_unhook_batch(hooks, 2);
  * ───────────────────────────────────────────────────────────────────────────── */
 
-int hook_batch(struct hook_desc *descs, size_t count, struct hook *hooks);
-int unhook_batch(struct hook *hooks, size_t count);
+int silkhook_hook_batch(struct silkhook_desc *descs, size_t n, struct silkhook_hook *hooks);
+int silkhook_unhook_batch(struct silkhook_hook *hooks, size_t n);
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * query API
  * ───────────────────────────────────────────────────────────────────────────── */
 
-size_t hook_count(void);
-int unhook_all(void);
+size_t silkhook_count(void);
+int silkhook_unhook_all(void);
+struct silkhook_hook *silkhook_find(void *targ);
 
-static inline bool hook_is_active(const struct hook *h)
+static inline bool silkhook_is_active(const struct silkhook_hook *h)
 {
     return h && h->active;
 }
-static inline void *hook_get_trampoline(const struct hook *h)
+
+static inline void *silkhook_get_trampoline(const struct silkhook_hook *h)
 {
-    return h ? (void *) h->trampoline : NULL;
+    return h ?  (void *) h->trampoline : NULL;
 }
+
+
+#ifdef __KERNEL__
+/* ─────────────────────────────────────────────────────────────────────────────
+ * kernel symbol resolution
+ *
+ *   void *targ = silkhook_ksym("tcp4_seq_show");
+ *   silkhook_hook(targ, my_detour, &h, &orig);
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+void *silkhook_ksym(const char *name);
+void *silkhook_ksym_mod(const char *mod, const char *name);
+
+#endif /* __KERNEL__ */
 
 
 #ifdef __cplusplus

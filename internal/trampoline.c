@@ -12,51 +12,55 @@
 #include "../include/status.h"
 #include "../platform/memory.h"
 
-#include <string.h>
+#ifdef __KERNEL__
+    #include <linux/string.h>
+#else
+    #include <string.h>
+#endif
 
 
-int trampoline_create(uintptr_t target, size_t hook_size, uintptr_t *out)
+/* ─────────────────────────────────────────────────────────────────────────────
+ * trampoline creation
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+int __trampoline_create(uintptr_t targ, size_t n_bytes, uintptr_t *out)
 {
-    int status;
     void *mem = NULL;
-    size_t instr_count = hook_size / INSTR_SIZE;
+    uint32_t code[SILKHOOK_TRAMPOLINE_MAX / 4];
+    struct __codebuf cb;
+    size_t n_instr = n_bytes / SILKHOOK_INSTR_SIZE;
+    const uint32_t *src = (const uint32_t *) targ;
+    int status;
 
-    status = mem_alloc_exec(TRAMPOLINE_MAX, &mem);
-    if (status != OK)
-    {
+    status = __mem_alloc_exec(SILKHOOK_TRAMPOLINE_MAX, &mem);
+    if (status != SILKHOOK_OK)
         return status;
-    }
 
-    uint32_t code[TRAMPOLINE_MAX / INSTR_SIZE];
-    struct codebuf cb;
-    codebuf_init(&cb, code, sizeof(code) / sizeof(code[0]), (uintptr_t)mem);
+    __CODEBUF_INIT(&cb, code, sizeof(code) / sizeof(code[0]), (uintptr_t) mem);
 
-    const uint32_t *src = (const uint32_t *)target;
-    for (size_t i = 0; i < instr_count; i++)
+    for (size_t i = 0; i < n_instr; i++)
     {
-        uintptr_t instr_pc = target + (i * INSTR_SIZE);
-        status = relocate_instr(src[i], instr_pc, &cb);
-        if (status != OK)
+        status = __relocate(src[i], targ + (i * SILKHOOK_INSTR_SIZE), &cb);
+        if (status != SILKHOOK_OK)
         {
-            mem_free(mem, TRAMPOLINE_MAX);
+            __mem_free(mem, SILKHOOK_TRAMPOLINE_MAX);
             return status;
         }
     }
 
-    emit_absolute_jump(&cb, target + hook_size);
-    memcpy(mem, code, codebuf_size(&cb));
-    flush_icache(mem, codebuf_size(&cb));
-    *out = (uintptr_t)mem;
+    __EMIT_ABS_JMP(&cb, targ + n_bytes);
 
-    return OK;
+    memcpy(mem, code,   __CODEBUF_SIZE(&cb));
+    __flush_icache(mem, __CODEBUF_SIZE(&cb));
+
+    *out = (uintptr_t)mem;
+    return SILKHOOK_OK;
 }
 
-
-int trampoline_destroy(uintptr_t trampoline)
+int __trampoline_destroy(uintptr_t tramp)
 {
-    if (trampoline == 0)
-    {
-        return ERR_INVALID_ARG;
-    }
-    return mem_free((void *)trampoline, TRAMPOLINE_MAX);
+    if (!tramp)
+        return SILKHOOK_ERR_INVAL;
+
+    return __mem_free((void *) tramp, SILKHOOK_TRAMPOLINE_MAX);
 }
