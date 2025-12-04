@@ -118,6 +118,31 @@
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * BTI  (ARMv8.5+)
+ *
+ * BTI-enabled code requires landing pads @ indirect branch targs:
+ *   bti j  - valid targ for BR   (jump)
+ *   bti c  - valid targ for BLR  (call)
+ *   bti jc - valid for both j, c
+ *
+ * trampoline is called via BLR,  so we can use BTI_C.
+ * on non-BTI devices these could decode as HINT  (nop)
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/*  bti c  */
+#define __BTI_C() \
+    (0xD503245Fu)
+
+/*  bti j  */
+#define __BTI_J() \
+    (0xD50324DFu)
+
+/* bti jc  */
+#define __BTI_JC() \
+    (0xD50324FFu)
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * instruction encoding macros
  *
  * we use x16 (IP0) as scratch - it's the intra-procedure-call reg
