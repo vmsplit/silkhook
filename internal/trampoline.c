@@ -16,6 +16,7 @@
     #include "arch.h"
 #else
     #include "relocator_arm32.h"
+    #include "relocator_thumb.h"
     #include "arch_arm32.h"
 #endif
 
@@ -37,15 +38,14 @@ int __trampoline_create(uintptr_t targ, size_t n_bytes, uintptr_t *out, int is_t
     struct __codebuf cb;
     int status;
 
-    (void) is_thumb;
-
     status = __mem_alloc_exec(SILKHOOK_TRAMPOLINE_MAX, &mem);
     if (status != SILKHOOK_OK)
         return status;
 
-    __CODEBUF_INIT(&cb, code, sizeof(code)  /  sizeof(code[0]), (uintptr_t) mem);
-
     #ifdef SILKHOOK_ARCH_ARM64
+    {
+        __CODEBUF_INIT(&cb, code, sizeof(code) / sizeof(code[0]), (uintptr_t)mem);
+
         __CODEBUF_EMIT(&cb, __BTI_C());
 
         size_t n_instr = n_bytes / SILKHOOK_INSTR_SIZE;
@@ -61,37 +61,41 @@ int __trampoline_create(uintptr_t targ, size_t n_bytes, uintptr_t *out, int is_t
             }
         }
 
+
         __EMIT_ABS_JMP(&cb, targ + n_bytes);
 
+        memcpy(mem, code, __CODEBUF_SIZE(&cb));
+        __flush_icache(mem, __CODEBUF_SIZE(&cb));
+    }
     #else /*  SILKHOOK_ARCH_ARM32  */
+        (void) is_thumb;
+
+        __CODEBUF_INIT(&cb, code, sizeof(code) / sizeof(code[0]), (uintptr_t) mem);
 
         if (is_thumb)
         {
-            /*  just copy the orig bytes and jmp back  */
-            const uint16_t *src = (const uint16_t *) targ;
-            size_t n_hw = n_bytes / 2;
+            uint16_t thumb_code[SILKHOOK_TRAMPOLINE_MAX / 2];
+            struct __thumb_codebuf tcb;
 
-            /*  copied orig instrs ( halfword pairs packed into uint32_t ) */
-            for (size_t i = 0; i < n_hw; i += 2)
+            __THUMB_CODEBUF_INIT(&tcb, thumb_code, sizeof(thumb_code) / sizeof(thumb_code[0]), (uintptr_t) mem);
+
+            /*  reloc orig thumb instrs  */
+            status = __thumb_reloc((const uint16_t *)targ, n_bytes, targ, &tcb);
+            if (status != SILKHOOK_OK)
             {
-                uint32_t packed;
-                if (i + 1 < n_hw)
-                    packed = __THUMB_PACK(src[i], src[i + 1]);
-                else
-                    packed = __THUMB_PACK(src[i], __THUMB_NOP);
-                __CODEBUF_EMIT(&cb, packed);
+                __mem_free(mem, SILKHOOK_TRAMPOLINE_MAX);
+                return status;
             }
 
-            /*  targ will need thumb bit so jump back  */
-            uint32_t jmp[3];
-            __THUMB_ABS_JMP(jmp, __ADD_THUMB(targ + n_bytes));
-            __CODEBUF_EMIT(&cb, jmp[0]);
-            __CODEBUF_EMIT(&cb, jmp[1]);
-            __CODEBUF_EMIT(&cb, jmp[2]);
+            /* Jump back with thumb bit */
+            __thumb_emit_abs_jmp(&tcb, (targ + n_bytes) | 1);
+
+            memcpy(mem, thumb_code, __THUMB_CODEBUF_SIZE(&tcb));
+            __flush_icache(mem, __THUMB_CODEBUF_SIZE(&tcb));
         }
         else {
             size_t n_instr = n_bytes / SILKHOOK_INSTR_SIZE;
-            const uint32_t *src = (const uint32_t *)targ;
+            const uint32_t *src = (const uint32_t *) targ;
 
             for (size_t i = 0; i < n_instr; i++)
             {
@@ -104,16 +108,16 @@ int __trampoline_create(uintptr_t targ, size_t n_bytes, uintptr_t *out, int is_t
             }
 
             /*  jump back */
-            __CODEBUF_EMIT(&cb, 0xEA000000u);                 /* b +4               */
-            __CODEBUF_EMIT(&cb, (uint32_t)(targ + n_bytes));  /* .long addr         */
-            __CODEBUF_EMIT(&cb, 0xE51FF00Cu);                 /* ldr pc, [pc, #-12] */
+            __CODEBUF_EMIT(&cb, 0xEA000000u);                  /* b +4               */
+            __CODEBUF_EMIT(&cb, (uint32_t) (targ + n_bytes));  /* .long addr         */
+            __CODEBUF_EMIT(&cb, 0xE51FF00Cu);                  /* ldr pc, [pc, #-12] */
+
+            memcpy(mem, code, __CODEBUF_SIZE(&cb));
+            __flush_icache(mem, __CODEBUF_SIZE(&cb));
         }
     #endif
 
-    memcpy(mem, code, __CODEBUF_SIZE(&cb));
-    __flush_icache(mem, __CODEBUF_SIZE(&cb));
-
-    *out = (uintptr_t)mem;
+    *out = (uintptr_t) mem;
     return SILKHOOK_OK;
 }
 

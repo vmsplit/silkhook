@@ -1,5 +1,5 @@
 /*
- * silkhook - hooking example
+ * silkhook - **thumb** mode hooking exampl
  * SPDX-License-Identifier: MIT
  */
 
@@ -9,15 +9,7 @@
 typedef int (*fn_t)(int, int);
 static fn_t orig_fn = NULL;
 
-/*  forcing arm mode on arm32 for compat  */
-#ifdef __arm__
-#define SILKHOOK_FUNC __attribute__((noinline, target("arm")))
-#else
-#define SILKHOOK_FUNC __attribute__((noinline))
-#endif
-
-
-SILKHOOK_FUNC
+__attribute__((noinline, target("thumb")))
 int target(int x, int y)
 {
     int a = x + 1;
@@ -25,7 +17,7 @@ int target(int x, int y)
     return a + b - 2;
 }
 
-SILKHOOK_FUNC
+__attribute__((noinline, target("thumb")))
 int detour(int x, int y)
 {
     printf("silkhook:    intercepted(%d, %d)\n", x, y);
@@ -42,16 +34,17 @@ int main(void)
     int r;
 
     printf("silkhook: loaded !!!\n");
+    printf("silkhook:   target @ %p (thumb=%d)\n",
+           (void *)target, (int)((uintptr_t)target & 1));
+    printf("silkhook:   detour @ %p (thumb=%d)\n",
+           (void *)detour, (int)((uintptr_t)detour & 1));
 
     r = silkhook_init();
-    if (r != SILKHOOK_OK)
-    {
-        printf("silkhook: init failure: %s\n", silkhook_strerror(r));
+    if (r != SILKHOOK_OK) {
+        printf("silkhook: init failure: %s\n",  silkhook_strerror(r));
         return 1;
     }
 
-    printf("silkhook: target @ %p\n", (void *) target);
-    printf("silkhook: detour @ %p\n", (void *) detour);
     printf("silkhook: before hook -> %d\n", targ_ptr(3, 4));
 
     r = silkhook_hook((void *) target, (void *) detour, &h, (void **) &orig_fn);
@@ -61,7 +54,7 @@ int main(void)
     }
 
     printf("silkhook: hook installed !!!\n");
-    printf("silkhook:    trampoline @ %p\n", (void *) h.trampoline);
+    printf("silkhook:    trampoline @ %p\n", (void *)h.trampoline);
 
     r = targ_ptr(3, 4);
     printf("silkhook: after hook -> %d\n", r);
