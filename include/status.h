@@ -17,23 +17,11 @@ enum silkhook_status {
     SILKHOOK_ERR_EXISTS = -4,
     SILKHOOK_ERR_NOENT  = -5,
     SILKHOOK_ERR_INSTR  = -6,
+    SILKHOOK_ERR_STATE  = -7,
 };
 
 
-static inline const char *silkhook_strerror(int e)
-{
-    switch (e)
-    {
-        case SILKHOOK_OK:          return "ok";
-        case SILKHOOK_ERR_INVAL:   return "invalid argument";
-        case SILKHOOK_ERR_NOMEM:   return "out of memory";
-        case SILKHOOK_ERR_PROT:    return "protection failure";
-        case SILKHOOK_ERR_EXISTS:  return "hook exists";
-        case SILKHOOK_ERR_NOENT:   return "not found";
-        case SILKHOOK_ERR_INSTR:   return "bad instruction";
-        default:                   return "unknown";
-    }
-}
+/*static inline */ const char *silkhook_strerror(int e);
 
 
 #endif /* _SILKHOOK_STATUS_H_ */

@@ -47,8 +47,8 @@ void emit_absolute_jump(struct codebuf *cb, uintptr_t target)
     /*
      * ldr x16, [pc, #8]
      * br  x16
-     * <target_lo>
-     * <target_hi>
+     * <target_low>
+     * <target_high>
      */
     codebuf_emit(cb, assemble_ldr_literal(16, 8));
     codebuf_emit(cb, assemble_br(16));

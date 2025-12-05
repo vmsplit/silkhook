@@ -22,6 +22,19 @@
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * arch detection
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+    #define SILKHOOK_ARCH_ARM64     1
+#elif defined(__arm__)   || defined(_M_ARM)
+    #define SILKHOOK_ARCH_ARM32     1
+#else
+    #error "silkhook: unsupported architecture !!! (this is a arm32 / arm64 lib)"
+#endif
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * constants
  *
  * hook sequence (16 bytes):
@@ -47,14 +60,20 @@
  *      round up to 128 just incase
  * ───────────────────────────────────────────────────────────────────────────── */
 
-#define SILKHOOK_INSTR_SIZE         4u
-#define SILKHOOK_HOOK_N_INSTR       4u
-#define SILKHOOK_HOOK_N_BYTE        (SILKHOOK_INSTR_SIZE * SILKHOOK_HOOK_N_INSTR)
-#define SILKHOOK_TRAMPOLINE_MAX     128u
+#define SILKHOOK_INSTR_SIZE             4u
 
-#define SILKHOOK_SAFE_HOOK_N_INSTR  9u
-#define SILKHOOK_SAFE_HOOK_N_BYTE   (SILKHOOK_INSTR_SIZE * SILKHOOK_SAFE_HOOK_N_INSTR)
-#define SILKHOOK_POP_N_BYTE         (SILKHOOK_INSTR_SIZE * 1u)
+#ifdef SILKHOOK_ARCH_ARM64
+    #define SILKHOOK_HOOK_N_INSTR       4u
+    #define SILKHOOK_HOOK_N_BYTE        16u
+    #define SILKHOOK_TRAMPOLINE_MAX     128u
+#else /*  SILKHOOK_ARCH_ARM32  */
+    #define SILKHOOK_HOOK_N_INSTR       3u
+    #define SILKHOOK_HOOK_N_BYTE        12u
+    #define SILKHOOK_TRAMPOLINE_MAX     64u
+#endif
+
+#define SILKHOOK_SAFE_HOOK_N_INSTR      9u
+#define SILKHOOK_SAFE_HOOK_N_BYTE       (SILKHOOK_INSTR_SIZE * SILKHOOK_SAFE_HOOK_N_INSTR)
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -69,18 +88,31 @@
  *                          = 272 bytes
  * ───────────────────────────────────────────────────────────────────────────── */
 
-struct silkhook_pt_regs {
-    uint64_t x0,  x1,  x2,  x3,  x4,  x5,  x6,  x7;
-    uint64_t x8,  x9,  x10, x11, x12, x13, x14, x15;
-    uint64_t x16, x17, x18, x19, x20, x21, x22, x23;
-    uint64_t x24, x25, x26, x27, x28, x29, x30;
+// #ifdef SILKHOOK_ARCH_ARM64
 
-    uint64_t sp;
-    uint64_t pc;
-    uint64_t pstate;
-};
+// struct silkhook_pt_regs {
+//     uint64_t  x0,  x1,  x2,  x3,  x4,  x5,  x6,  x7;
+//     uint64_t  x8,  x9, x10, x11, x12, x13, x14, x15;
+//     uint64_t x16, x17, x18, x19, x20, x21, x22, x23;
+//     uint64_t x24, x25, x26, x27, x28, x29,      x30;
 
-#define SILKHOOK_PT_REGS_SIZE       272u
+//     uint64_t sp;
+//     uint64_t pc;
+//     uint64_t pstate;
+// };
+
+// #define SILKHOOK_PT_REGS_SIZE       272u
+
+// #else /*  SILKHOOK_ARCH_ARM32  */
+
+// struct silkhook_pt_regs {
+//     uint32_t r0, r1,  r2, r3, r4, r5, r6, r7;
+//     uint32_t r8, r9, r10, fp, ip, sp,     lr;
+// };
+
+// #define SILKHOOK_PT_REGS_SIZE       60u
+
+// #endif
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -97,11 +129,14 @@ struct silkhook_hook {
     uintptr_t   detour;
     uintptr_t   trampoline;
 
-    uint32_t    orig[SILKHOOK_HOOK_N_INSTR];
+    uint8_t     orig[SILKHOOK_HOOK_N_BYTE];
     size_t      orig_size;
 
-    bool        active;
+    #ifdef SILKHOOK_ARCH_ARM32
+        uint8_t is_thumb;
+    #endif
 
+    bool        active;
     struct silkhook_hook *next;
 };
 

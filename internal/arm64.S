@@ -149,7 +149,7 @@ __silkhook_flush_icache:
 // trampoline - call orig function
 .globl \func\()_orig
 \func\()_orig:
-    // slots for relocated orig instrs (filled at install)
+    // slots for reloc'd orig instrs (filled at install)
     nop                         // b . +8
     nop                         // ret
     nop                         // str x0, [sp, #-16]!

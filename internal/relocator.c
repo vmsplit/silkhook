@@ -15,7 +15,7 @@
  * b. cond / cbz / tbz have limited range,  so we invert the cond
  * and jump over an absolute branch to the orig targ
  *
- *   orig:                 relocated:
+ *   orig:                 reloc'd:
  *   ┌──────────────┐      ┌──────────────────────┐
  *   │ cbz x0, #off │      │ cbnz x0, #skip       │ <- invertd
  *   └──────────────┘      │ ldr  x16, [pc, #8]   │
@@ -70,7 +70,8 @@ static void __reloc_ldr_lit(uint32_t instr, uintptr_t targ, struct __codebuf *cb
     {
         uint32_t sz = (opc == 0) ? 2   : (opc == 1) ? 3 : 4;
         __CODEBUF_EMIT(cb, 0x3C400200u | (sz << 30) | (16 << 5) | rt);
-    } else {
+    }
+    else {
         __CODEBUF_EMIT(cb, (opc ?  0xF9400200u : 0xB9400200u) | (16 << 5) | rt);
     }
 }
@@ -80,7 +81,7 @@ static void __reloc_ldr_lit(uint32_t instr, uintptr_t targ, struct __codebuf *cb
  * public
  * ───────────────────────────────────────────────────────────────────────────── */
 
-int __relocate(uint32_t instr, uintptr_t pc, struct __codebuf *cb)
+int __reloc(uint32_t instr, uintptr_t pc, struct __codebuf *cb)
 {
     enum __instr_kind k = __CLASSIFY(instr);
     uintptr_t targ;

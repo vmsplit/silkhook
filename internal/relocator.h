@@ -66,7 +66,7 @@ enum __instr_kind {
 )
 
 
-int __relocate(uint32_t instr, uintptr_t pc, struct __codebuf *cb);
+int __reloc(uint32_t instr, uintptr_t pc, struct __codebuf *cb);
 
 
 #endif /* _SILKHOOK_RELOCATOR_H_ */

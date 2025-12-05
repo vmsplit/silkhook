@@ -30,19 +30,19 @@ static int __resolve_syms(void)
     if (!__module_alloc_fn)
     {
         __module_alloc_fn = silkhook_ksym("module_alloc");
-        if (!__module_alloc_fn)
+        if (! __module_alloc_fn)
             return -ENOENT;
     }
     if (!__set_memory_x_fn)
     {
         __set_memory_x_fn = silkhook_ksym("set_memory_x");
-        if (!__set_memory_x_fn)
+        if (! __set_memory_x_fn)
             return -ENOENT;
     }
-    if (!__patch_text_fn)
+    if (! __patch_text_fn)
     {
         __patch_text_fn = silkhook_ksym("aarch64_insn_patch_text_nosync");
-        if (!__patch_text_fn)
+        if (! __patch_text_fn)
             return -ENOENT;
     }
     return 0;
@@ -75,12 +75,12 @@ int __mem_alloc_exec(size_t size, void **out)
         return SILKHOOK_ERR_PROT;
 
     mem = __module_alloc_fn(size);
-    if (!mem)
+    if (! mem)
         return SILKHOOK_ERR_NOMEM;
 
     memset(mem, 0, size);
 
-    flush_icache_range((unsigned long)mem, (unsigned long) mem + size);
+    flush_icache_range((unsigned long)mem, (unsigned long)mem + size);
     ret = __set_memory_x_fn((unsigned long)mem, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
     if (ret)
     {
@@ -100,14 +100,20 @@ int __mem_free(void *ptr, size_t size)
     return SILKHOOK_OK;
 }
 
+int __mem_write_code(void *dst, const void *src, size_t len)
+{
+    /*  __mem_write_text  uses aarch64_insn_patch_text_nosync  */
+    return __mem_write_text(dst, src, len);
+}
+
 void __flush_icache(void *addr, size_t len)
 {
-    flush_icache_range((unsigned long)addr, (unsigned long) addr + len);
+    flush_icache_range((unsigned long)addr, (unsigned long)addr + len);
 }
 
 int __mem_write_text(void *dst, const void *src, size_t len)
 {
-    const u32 *insns = src;
+    const u32 *instrs = src;
     size_t n = len / sizeof(u32);
     size_t i;
     int ret;
@@ -118,10 +124,10 @@ int __mem_write_text(void *dst, const void *src, size_t len)
 
     for (i = 0; i < n; i++)
     {
-        ret = __patch_text_fn((u32 *)dst + i, insns[i]);
+        ret = __patch_text_fn((u32 *)dst + i, instrs[i]);
         if (ret)
         {
-            pr_err("silkhook: patch_text failed at offset %zu: %d\n", i * 4, ret);
+            pr_err("silkhook: patch_text failure @  offset[%zu]: %d\n", i * 4, ret);
             return SILKHOOK_ERR_PROT;
         }
     }

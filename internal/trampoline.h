@@ -19,14 +19,14 @@
 /* ─────────────────────────────────────────────────────────────────────────────
  * trampoline layout
  *
- *   [0.. n]   relocated orig instrs
+ *   [0.. n]   reloc'd orig instrs
  *   [n+1]     ldr x16, [pc, #8]
  *   [n+2]     br  x16
  *   [n+3]     <targ + HOOK_N_BYTE low>
  *   [n+4]     <targ + HOOK_N_BYTE high>
  * ───────────────────────────────────────────────────────────────────────────── */
 
-int __trampoline_create(uintptr_t targ, size_t n_bytes, uintptr_t *out);
+int __trampoline_create(uintptr_t targ, size_t n_bytes, uintptr_t *out, int is_thumb);
 int __trampoline_destroy(uintptr_t tramp);
 
 

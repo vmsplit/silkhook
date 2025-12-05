@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <string.h>
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -79,6 +80,24 @@ int __mem_free(void *ptr, size_t size)
         return SILKHOOK_ERR_NOMEM;
     return SILKHOOK_OK;
 }
+
+int __mem_write_code(void *dst, const void *src, size_t len)
+{
+    long page_size = sysconf(_SC_PAGESIZE);
+    uintptr_t page_start = (uintptr_t)dst & ~(page_size - 1);
+    size_t page_len = ((uintptr_t)dst + len - page_start + page_size - 1) & ~(page_size - 1);
+
+    if (mprotect((void *)page_start, page_len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0)
+        return SILKHOOK_ERR_PROT;
+
+    memcpy(dst, src, len);
+
+    /*  restore read-exec  */
+    mprotect((void *)page_start, page_len, PROT_READ | PROT_EXEC);
+
+    return SILKHOOK_OK;
+}
+
 
 void __flush_icache(void *addr, size_t len)
 {

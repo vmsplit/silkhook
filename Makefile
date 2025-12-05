@@ -7,16 +7,26 @@ LDFLAGS := -lpthread
 
 BUILD   := build
 
-C_SRCS  := silkhook.c \
-           internal/trampoline.c \
-           internal/relocator.c \
-           platform/user/memory.c
+ARCH := $(shell uname -m)
 
-S_SRCS  := internal/arm64.S
+ifeq ($(ARCH),aarch64)
+ARCH_SRCS := internal/relocator.c internal/arm64.S
+endif
 
-C_OBJS  := $(C_SRCS:%.c=$(BUILD)/%.o)
-S_OBJS  := $(S_SRCS:%.S=$(BUILD)/%.o)
-OBJS    := $(C_OBJS) $(S_OBJS)
+ifeq ($(ARCH),armv7l)
+ARCH_SRCS := internal/relocator_arm32.c
+endif
+
+C_SRCS := silkhook.c \
+          internal/trampoline.c \
+          $(filter %.c,$(ARCH_SRCS)) \
+          platform/user/memory.c
+
+S_SRCS := $(filter %.S,$(ARCH_SRCS))
+
+C_OBJS := $(C_SRCS:%.c=$(BUILD)/%.o)
+S_OBJS := $(S_SRCS:%.S=$(BUILD)/%.o)
+OBJS   := $(C_OBJS) $(S_OBJS)
 
 .PHONY: all clean example test module module-clean
 

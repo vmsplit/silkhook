@@ -28,6 +28,7 @@ int __mem_make_rx(void *addr, size_t len);
 
 int __mem_alloc_exec(size_t size, void **out);
 int __mem_free(void *ptr, size_t size);
+int __mem_write_code(void *dst, const void *src, size_t len);
 
 void __flush_icache(void *addr, size_t len);
 

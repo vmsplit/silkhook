@@ -1,23 +1,31 @@
 /*
- * silkhook - example
+ * silkhook - hooking example
+ * SPDX-License-Identifier: MIT
  */
 
 #include <stdio.h>
 #include "../include/silkhook.h"
 
-
 typedef int (*fn_t)(int, int);
 static fn_t orig_fn = NULL;
 
-__attribute__((noinline))
-int target(int x, int y)
+/*  forcing arm mode on arm32 for compat  */
+#ifdef __arm__
+#define SILKHOOK_FUNC __attribute__((noinline, targ("arm")))
+#else
+#define SILKHOOK_FUNC __attribute__((noinline))
+#endif
+
+
+SILKHOOK_FUNC
+int targ(int x, int y)
 {
     int a = x + 1;
     int b = y + 1;
     return a + b - 2;
 }
 
-__attribute__((noinline))
+SILKHOOK_FUNC
 int detour(int x, int y)
 {
     printf("silkhook:    intercepted(%d, %d)\n", x, y);
@@ -26,49 +34,43 @@ int detour(int x, int y)
     return r * 2;
 }
 
-
-static int (*volatile targ_ptr)(int, int) = target;
+static int (*volatile targ_ptr)(int, int) = targ;
 
 int main(void)
 {
     struct silkhook_hook h;
     int r;
 
-    printf("silkhook: loaded\n");
+    printf("silkhook: loaded !!!\n");
 
     r = silkhook_init();
     if (r != SILKHOOK_OK)
     {
-        printf("silkhook: init failed: %s\n", silkhook_strerror(r));
+        printf("silkhook: init failure: %s\n", silkhook_strerror(r));
         return 1;
     }
 
-    printf("silkhook: target @ %p\n", (void *) target);
+    printf("silkhook: targ @ %p\n", (void *) targ);
     printf("silkhook: detour @ %p\n", (void *) detour);
     printf("silkhook: before hook -> %d\n", targ_ptr(3, 4));
 
-    r = silkhook_hook((void *) target, (void *) detour, &h, (void **) &orig_fn);
-    if (r != SILKHOOK_OK)
-    {
-        printf("silkhook: hook failed: %s\n", silkhook_strerror(r));
+    r = silkhook_hook((void *) targ, (void *) detour, &h, (void **) &orig_fn);
+    if (r != SILKHOOK_OK) {
+        printf("silkhook: hook failure: %s\n", silkhook_strerror(r));
         return 1;
     }
 
-    printf("silkhook: hook installed\n");
+    printf("silkhook: hook installed !!!\n");
     printf("silkhook:    trampoline @ %p\n", (void *) h.trampoline);
-    printf("silkhook: after hook -> %d\n", targ_ptr(3, 4));
 
-    r = silkhook_unhook(&h);
-    if (r != SILKHOOK_OK)
-    {
-        printf("silkhook: unhook failed: %s\n", silkhook_strerror(r));
-        return 1;
-    }
+    r = targ_ptr(3, 4);
+    printf("silkhook: after hook -> %d\n", r);
 
-    printf("silkhook: hook removed\n");
+    silkhook_unhook(&h);
+    printf("silkhook: hook removed !!!\n");
     printf("silkhook: after unhook -> %d\n", targ_ptr(3, 4));
 
     silkhook_shutdown();
-    printf("silkhook: unloaded\n");
+    printf("silkhook: unloaded !!!\n");
     return 0;
 }
