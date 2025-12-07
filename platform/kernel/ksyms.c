@@ -1,55 +1,59 @@
 /*
- * silkhook - miniature arm64 hooking lib
- * ksyms.c  - kernel symbol resolution
+ * silkhook - miniature arm hooking lib
+ * ksyms.c  - kallsyms resolution
  *
  * SPDX-License-Identifier: MIT
  */
 
-#include "ksyms.h"
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/kallsyms.h>
 #include <linux/kprobes.h>
 
+#include "ksyms.h"
 
-static unsigned long (*__kallsyms_lookup_name)(const char *name) = NULL;
+static unsigned long (*__kallsyms_lookup_name)(const char *) = NULL;
 
-static int __resolve_kallsyms(void)
+static unsigned long kprobe_get_func_addr(const char *func_name)
 {
-    struct kprobe kp = { .symbol_name = "kallsyms_lookup_name" };
-    int r;
+	static struct kprobe kp;
+	unsigned long addr;
 
-    if (__kallsyms_lookup_name)
-        return 0;
+	memset(&kp, 0, sizeof(kp));
+	kp.symbol_name = func_name;
 
-    r = register_kprobe(&kp);
-    if (r < 0)
-        return r;
+	if (register_kprobe(&kp) < 0)
+	{
+		pr_err("silkhook: kprobe failure for %s\n", func_name);
+		return 0;
+	}
 
-    __kallsyms_lookup_name = (void *) kp.addr;
-    unregister_kprobe(&kp);
+	addr = (unsigned long)kp.addr;
+	unregister_kprobe(&kp);
 
-    return 0;
+	pr_info("silkhook: kprobe found %s @ %lx\n", func_name, addr);
+	return addr;
+}
+
+int silkhook_ksyms_init(void)
+{
+	if (__kallsyms_lookup_name)
+		return 0;
+
+	__kallsyms_lookup_name = (void *)kprobe_get_func_addr("kallsyms_lookup_name");
+	if (!__kallsyms_lookup_name)
+	{
+		pr_err("silkhook: failure to resolve kallsyms_lookup_name\n");
+		return -ENOENT;
+	}
+
+	return 0;
 }
 
 void *silkhook_ksym(const char *name)
 {
-    if (__resolve_kallsyms() != 0)
-        return NULL;
+	if (!__kallsyms_lookup_name)
+		return NULL;
 
-    return (void *) __kallsyms_lookup_name(name);
+	return (void *)__kallsyms_lookup_name(name);
 }
-EXPORT_SYMBOL(silkhook_ksym);
-
-void *silkhook_ksym_mod(const char *mod, const char *name)
-{
-    char buf[256];
-
-    if (!mod)
-        return silkhook_ksym(name);
-
-    snprintf(buf, sizeof(buf), "%s:%s", mod, name);
-    return silkhook_ksym(buf);
-}
-EXPORT_SYMBOL(silkhook_ksym_mod);

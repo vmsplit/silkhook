@@ -1,6 +1,6 @@
 /**
  * silkhook - miniature arm64 hooking lib
- * arm64. S  - asm primitives
+ * arm64.S  - asm primitives
  *
  * SPDX-License-Identifier: MIT
  */
@@ -83,10 +83,10 @@ __silkhook_flush_icache:
 
 .macro silkhook_entry func
 
-. extern \func\()_hook_handler
+.extern \func\()_hook_handler
 
 .globl \func\()_hook_entry
-. align 12
+.align 12
 \func\()_hook_entry:
     // restore x0 if came via safe jump
     ldr     x0, [sp], #16

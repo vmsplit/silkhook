@@ -55,7 +55,8 @@ int main(void)
     printf("silkhook: before hook -> %d\n", targ_ptr(3, 4));
 
     r = silkhook_hook((void *) target, (void *) detour, &h, (void **) &orig_fn);
-    if (r != SILKHOOK_OK) {
+    if (r != SILKHOOK_OK)
+    {
         printf("silkhook: hook failure: %s\n", silkhook_strerror(r));
         return 1;
     }

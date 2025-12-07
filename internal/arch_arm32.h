@@ -139,7 +139,7 @@
  *   ldr  r0, [pc, #4]    ; load addr      (2 bytes)
  *   mov  pc, r0          ; jump           (2 bytes)  --  actually use bx r0
  *   pop  {r0}            ; never reached! (2 bytes)  --  use as padding
- *   .long addr           ; target         (4 bytes)
+ *   .long addr           ; targ         (4 bytes)
  *
  * total:  12 bytes , but we trash r0...
  *
