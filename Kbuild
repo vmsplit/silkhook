@@ -14,6 +14,7 @@ silkhook_test-y := \
 	platform/kernel/svc.o \
 	platform/kernel/svc_hook.o \
 	platform/kernel/elb.o \
-	platform/kernel/elb_asm.o
+	platform/kernel/elb_asm.o \
+	platform/kernel/ich.o
 
 ccflags-y := -I$(src)/include -DSILKHOOK_ARCH_ARM64
