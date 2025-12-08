@@ -63,6 +63,62 @@ static void __elb_remove(struct silkhook_elb_hook *h)
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * simple instr emu
+ *
+ * overwrote the orig instr with brk,  need to emulate it
+ * only handles common prologue instr for now
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+
+static void __elb_emulate_instr(struct pt_regs *regs, uint32_t instr)
+{
+    unsigned int rd, rn, rm;
+
+    /*  nop - d503201f  */
+    if (instr == 0xD503201F)
+            return;
+
+    /*  hint instrs  (pac, bti, etc) - d503xxxx  */
+    if ((instr & 0xFFFFF000) == 0xD5030000)
+        return;
+
+    /* mov xd, xn  (orr xd, xzr, xn) - aa0003e0 | (rn << 16) | rd  */
+    if ((instr & 0xFF0003E0) == 0xAA0003E0)
+    {
+        rd =  instr        & 0x1F;
+        rn = (instr >> 16) & 0x1F;
+
+        if (rd < 31)
+        {
+            if (rn == 31)
+                regs->regs[rd] = 0;
+            else if (rn < 31)
+                regs->regs[rd] = regs->regs[rn];
+            else if (rn == 30)
+                regs->regs[rd] = regs->regs[30];
+        }
+        return;
+    }
+
+    /*  mov xd, #imm (movz)  - d28xxxxx  */
+    if ((instr & 0xFF800000) == 0xD2800000)
+    {
+        rd = instr & 0x1F;
+        uint16_t imm = (instr >> 5) & 0xFFFF;
+        if (rd < 31)
+            regs->regs[rd] = imm;
+        return;
+    }
+
+    /*  stp x29, x30, [sp, #imm]! - a9bf7bfd patt  */
+    /*    modify stack, for now we just warn user  */
+
+    pr_warn_once("silkhook:  [elb]  cannot emulate %08x @ %px, "
+                    "function could misbehave!!\n", instr, (void *) regs->pc);
+}
+
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * brk exception handler
  *
  * called by kernel's debug exception dispatch when brk #imm matches
@@ -86,9 +142,14 @@ static int __elb_brk_handler(struct pt_regs *regs, unsigned long esr)
     if (!h)
         return DBG_HOOK_ERROR;
 
+    /*  call user handler  */
     if (h->handler)
         h->handler(regs, h);
 
+    /*  emulate the orig instr we just overwrote  */
+    __elb_emulate_instr(regs, h->orig_instr);
+
+    /*  skip past brk  */
     regs->pc += 4;
 
     return DBG_HOOK_HANDLED;
