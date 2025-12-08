@@ -265,7 +265,7 @@ static int silkhook__ich_debug_show(struct seq_file *m, void *v)
     seq_puts(m, "┌─────────────────────────────────────────┐\n");
     seq_puts(m, "│ config                                  │\n");
     seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_printf(m, "│ targ:     %px                │\n",           __ich_hook.targ);
+    seq_printf(m, "│ targ:     %px              │\n",           __ich_hook.targ);
     seq_printf(m, "│ orig instr: %08x                    │\n",    __ich_hook.orig_instr);
     seq_printf(m, "│ coalesce:   every %4u irqs             │\n", __ich_hook.coalesce_n);
     seq_printf(m, "│ jitter:     %u-%u cycles                │\n",
@@ -317,10 +317,10 @@ static int silkhook__apr_debug_show(struct seq_file *m, void *v)
     seq_puts(m, "┌─────────────────────────────────────────┐\n");
     seq_puts(m, "│ config                                  │\n");
     seq_puts(m, "├─────────────────────────────────────────┤\n");
-    seq_printf(m, "│ targ:     %px                │\n", __apr_hook.targ);
-    seq_printf(m, "│ shadow:     %px              │\n", __apr_hook.shadow);
-    seq_printf(m, "│ orig_pfn:   %lx                      │\n", __apr_hook.pfn_orig);
-    seq_printf(m, "│ hook_pfn:   %lx                      │\n", __apr_hook.pfn_hook);
+    seq_printf(m, "│ targ:     %px              │\n", __apr_hook.targ);
+    seq_printf(m, "│ shadow:     %px            │\n", __apr_hook.shadow);
+    seq_printf(m, "│ orig_pfn:   %lx                       │\n", __apr_hook.pfn_orig);
+    seq_printf(m, "│ hook_pfn:   %lx                       │\n", __apr_hook.pfn_hook);
     seq_printf(m, "│ active:     %s                         │\n",
                __apr_hook.active ? "yes" : "no");
     seq_puts(m, "└─────────────────────────────────────────┘\n\n");
